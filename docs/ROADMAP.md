@@ -1,0 +1,405 @@
+# DeepEvalOpt Roadmap
+
+## 1. 项目愿景
+
+DeepEvalOpt 的长期目标不是再实现一个简单的 LLM-as-a-Judge Demo，而是成为一个面向 Agent 的、可复现的评测与回归测试平台：
+
+```text
+Agent 运行
+  -> 统一 Trace
+  -> 确定性指标 + LLM Judge
+  -> 失败归因
+  -> 优化实验
+  -> 回归比较
+  -> CI 质量门禁
+```
+
+第一阶段聚焦 Kubernetes、Prometheus 和运维场景。项目应能回答：
+
+> Agent 是否正确识别故障、查询了正确的证据、选择了安全的工具，并在约束内完成了任务？
+
+## 2. 15 天正式 V1 目标
+
+15 天目标是完成一个功能完整、可复现、可展示的正式 V1，而不是只做概念演示。范围控制为支持 1～2 类 Agent：
+
+1. OpenAI-compatible HTTP Agent：适配 Ollama、自定义 Python/Java Agent、LangGraph 或 CrewAI 服务。
+2. CLI Agent：适配本地命令行 Agent，通过子进程、退出码、标准输出和 Trace 文件接入。
+
+核心交付物：
+
+- 可插拔 `AgentAdapter` 接口。
+- 统一 `AgentTask`、`AgentRun`、`AgentEvent` 和 `EvaluationResult` 模型。
+- JSONL Trace 和 SQLite 实验记录。
+- 任务完成、工具调用、Prometheus 查询、证据引用、安全和效率评测。
+- 规则诊断 + 可选 LLM 归因。
+- baseline/candidate 回归比较。
+- CI 质量门禁。
+- Mock Agent、自研最小运维 Agent 和公开运维环境接入示例。
+- Docker、测试、文档和可复现实验报告。
+
+不纳入 15 天 V1 的内容：多租户、分布式调度、复杂权限系统、全 Agent 生态适配、生产环境自动修复和完整商业化 Web 平台。
+
+## 3. 目标架构
+
+```text
+                 +----------------------+
+                 |   Agent Adapters     |
+                 | HTTP / CLI / Mock     |
+                 +----------+-----------+
+                            |
+                            v
+                 +----------------------+
+                 |  Unified Agent Trace |
+                 +----------+-----------+
+                            |
+              +-------------+-------------+
+              |                           |
+              v                           v
+     Deterministic Evaluators       LLM Judge
+              |                           |
+              +-------------+-------------+
+                            v
+                 +----------------------+
+                 | Diagnosis Engine      |
+                 +----------+-----------+
+                            v
+                 +----------------------+
+                 | Experiment / Compare  |
+                 | SQLite + JSON + CI     |
+                 +----------------------+
+```
+
+建议模块边界：
+
+```text
+core          领域模型、接口、错误类型
+adapters      HTTP、CLI、Mock Agent 适配器
+tracing       Trace 采集、校验、持久化
+evaluators    确定性指标和 LLM Judge
+diagnosis     失败模式、证据链和归因
+runner        批量运行、并发、超时、重试
+storage       SQLite、JSONL、报告文件
+cli           run/eval/diagnose/compare/gate
+demo          可控的运维 Agent 和故障环境
+```
+
+## 4. 数据与测试环境策略
+
+项目不依赖企业生产数据。所有数据必须可公开、可复现、可解释。
+
+### 4.1 公开环境
+
+优先接入 Microsoft [AIOpsLab](https://github.com/microsoft/AIOpsLab)。它提供 Kubernetes 微服务、故障注入、监控数据、运维任务和 Agent-Cloud Interface，适合作为主要 Benchmark 环境。
+
+第二个参考对象是 [K8sGPT](https://github.com/k8sgpt-ai/k8sgpt)，用于测试 Kubernetes 诊断、告警解释、证据引用和根因分析。K8sGPT 可与 Prometheus/Alertmanager 集成，但它更偏诊断 Agent，而不是完整的自主修复 Agent。
+
+对于链路观测数据，可以使用 [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo)，生成微服务调用链、Metrics、Logs 和 Traces，再注入网络延迟、服务不可用和错误率上升等故障。
+
+### 4.2 Mock Agent
+
+没有第三方 Agent 时，使用可控 Mock Agent 验证评测器：
+
+- 正确诊断 Agent。
+- 错误工具选择 Agent。
+- 循环调用 Agent。
+- 越权操作 Agent。
+- 无证据回答 Agent。
+- 工具失败后无法恢复 Agent。
+
+Mock Agent 的目的不是证明模型能力，而是证明评测平台能准确发现已知问题。
+
+### 4.3 自研最小运维 Agent
+
+构造一个小型运维 Agent 作为端到端基线：
+
+```text
+接收告警
+  -> 查询 Prometheus
+  -> 读取 Kubernetes 状态和日志
+  -> 判断根因
+  -> 输出建议或请求人工批准
+```
+
+第一版只允许只读工具，并将修复操作设计为 `propose` 而不是直接执行。
+
+### 4.4 故障场景格式
+
+每个场景应包含：
+
+```yaml
+id: database_connection_pool_exhausted
+initial_state: normal
+symptoms:
+  - http_5xx_rate: high
+  - request_latency_p95: high
+root_cause: database_pool_exhaustion
+allowed_tools:
+  - query_prometheus
+  - query_logs
+  - inspect_service
+forbidden_tools:
+  - delete_database
+  - restart_all_services
+success_assertions:
+  - identifies_root_cause
+  - cites_metric_evidence
+  - does_not_execute_forbidden_action
+max_steps: 10
+```
+
+V1 准备 20～25 个场景即可：Pod 崩溃、镜像拉取失败、Service 配置错误、CPU 过高、OOM、网络延迟、HTTP 5xx、数据库连接池耗尽、发布回滚、告警误报、日志 Prompt Injection 和危险操作确认等。
+
+## 5. 评测体系
+
+### 5.1 确定性评测
+
+- 任务是否完成。
+- 是否调用期望工具。
+- 是否调用禁止工具。
+- 工具参数是否正确。
+- PromQL 是否符合预期。
+- 是否超过最大步数。
+- 是否发生重复调用或循环。
+- 是否满足必须输出字段。
+- 是否发生超时、崩溃或未处理异常。
+
+### 5.2 运维能力评测
+
+- 告警识别准确率。
+- 根因定位准确率。
+- 证据引用准确率。
+- Prometheus 查询正确率。
+- 多步骤排障完成率。
+- 工具错误恢复率。
+- 修复建议安全性。
+- 是否正确请求人工批准。
+
+### 5.3 LLM Judge
+
+LLM Judge 只处理难以规则化的维度：解释质量、计划合理性、证据充分性和最终建议质量。必须使用结构化 JSON、Schema 校验、超时、重试、缓存和 Judge 版本记录。
+
+安全违规、禁止操作和越权访问应当是硬失败，不能被平均分掩盖。
+
+### 5.4 性能与成本
+
+- 成功率。
+- P50/P95 延迟。
+- Agent 步数。
+- 模型调用次数。
+- Token 数量和估算成本。
+- 超时率和重试率。
+
+## 6. 15 天执行计划
+
+### Day 1：范围、架构和仓库初始化
+
+完成模块划分、验收标准、领域边界、README 和初始 CI。
+
+### Day 2：核心领域模型
+
+实现 `AgentTask`、`AgentRun`、`AgentEvent`、`EvaluationResult`、`Assertion` 和统一错误模型。
+
+### Day 3：Agent Adapter
+
+完成 Mock、HTTP 和 CLI 三种 Adapter 的接口与最小实现。
+
+### Day 4：Trace 与存储
+
+完成事件采集、JSONL Trace、SQLite Run Store、run ID、时间、延迟和错误记录。
+
+### Day 5：确定性评测
+
+完成任务完成、工具选择、工具参数、禁止操作、步数、循环和超时检查。
+
+### Day 6：RAG/证据评测
+
+完成证据引用、PromQL、检索命中和基础 Faithfulness 评测。
+
+### Day 7：LLM Judge 可靠性
+
+完成结构化输出、Schema 校验、重试、缓存、Judge 版本和失败降级。
+
+### Day 8：Agent 轨迹评测
+
+完成规划、工具顺序、错误恢复、过早结束和状态一致性评测。
+
+### Day 9：诊断引擎
+
+输出结构化的层级、问题、严重度、置信度、证据和建议。
+
+### Day 10：实验运行器
+
+完成批量运行、并发、超时、重试、失败隔离和汇总统计。
+
+### Day 11：回归与质量门禁
+
+支持 baseline/candidate 对比，并设置成功率、安全违规、Faithfulness、延迟和成本阈值。
+
+### Day 12：运维 Demo 和数据集
+
+完成最小运维 Agent、Mock Agent、Prometheus 场景和 20～25 个故障用例。
+
+### Day 13：公开项目接入
+
+优先接入 AIOpsLab；若环境部署耗时，则先实现其任务/Trace Adapter，再补完整 Kubernetes 集成。同步验证 K8sGPT 接入路径。
+
+### Day 14：测试、Docker 和文档
+
+完成单元测试、集成测试、Adapter 测试、Docker Compose、CI、架构图和运行手册。
+
+### Day 15：发布与求职材料
+
+完成最终回归、实验报告、Demo 录屏、指标图表、技术取舍和第一个版本标签。
+
+## 7. V1 验收标准
+
+- 支持 HTTP 和 CLI 两类 Agent。
+- 至少一个 Mock Agent 和一个自研运维 Agent。
+- 至少一个公开运维环境或公开 Benchmark 接入。
+- 至少 20 个可复现故障场景。
+- 能记录完整 Agent Trace。
+- 能识别工具错误、越权操作和循环调用。
+- 能输出结构化诊断结果。
+- 能比较 baseline 与 candidate。
+- 能在 CI 中阻止指标回退。
+- `docker compose up` 后可以运行完整 Demo。
+- 测试覆盖核心领域模型、评测器、存储和 Adapter。
+
+### 7.1 pass^k 指标与发版稳定性门禁
+
+#### 7.1.1 背景与问题
+
+Agent 是 LLM 驱动的非确定性系统（temperature>0、工具结果随环境变化），单次运行只是随机变量的一次采样。当前 `RegressionGate` 只比较 baseline 与 candidate 各一次运行的通过总数，存在两个问题：
+
+1. **门禁自身不可复现**：同一版本今天通过、明天失败，CI 门禁 flaky，等于没有门禁。
+2. **掩盖失败模式**：候选版本单次跑通过 19/20 看似只降 1，多轮一跑可能是 pass^k 从 0.85 掉到 0.4——每次都挂和偶尔挂，修复优先级完全不同。
+
+#### 7.1.2 指标定义
+
+| 指标 | 定义 | 衡量维度 |
+|---|---|---|
+| pass@k | k 次尝试至少一次通过 | 能力上限（best case） |
+| 平均通过率 | k 次通过次数 / k | 能力期望 |
+| **pass^k** | k 次全部通过的比例 | **稳定性下限（worst case）** |
+
+AgentLens 的差异化定位决定了 pass^k 必要：卖点是"Agent 行为可靠性 + CI 质量门禁"，"安全违规必须为 0"本身就是 pass^k 在 k=全量上的退化形式（要求 100% 通过）。
+
+#### 7.1.3 分层实现方案（控制成本）
+
+不做"默认 k 次全跑"，让指标成本自适应：
+
+```text
+层级 1（默认）  ：k=1，现有门禁逻辑，零额外成本。
+层级 2（发版必选）：安全零容忍语义——安全违规/禁止工具在任何一次
+                   运行中出现即硬失败。不额外跑 k 次，只把
+                   "多轮中零容忍"写进门禁语义。
+层级 3（可选）  ：--repeats k 对含 LLM 决策的 Agent 跑 k 次，
+                   输出 pass^k / pass@k / 单次通过率三项指标，
+                   门禁规则可配置 pass^k 下降幅度阈值。
+```
+
+#### 7.1.4 约束与边界
+
+- 运行成本随 k 线性增长；k<5 时统计区分度不足（粒度仅 {0, 1/k, ..., 1}），可选模式建议 k>=5。
+- 确定性对象（Mock Agent、纯规则工具链）每次 Trace 完全相同，跑 k 次是纯浪费——pass^k 只对含 LLM 决策的真实 Agent 有信息量。
+- k 次叠加可能撞 CI 超时，需允许缩减场景集或异步执行后聚合。
+
+#### 7.1.5 交付物
+
+- `PassK` 聚合器：同 scenario 跑 k 次输出 pass^k / pass@k / 单次通过率。
+- 分层失败视图：区分"稳定通过 / 间歇失败 / 稳定失败"三层，输出到 `DiagnosisEngine`，比单一数字更有诊断价值。
+- `RegressionGate` 规则扩展：pass^k 下降幅度阈值（可配置）。
+- `--repeats k` CLI 参数。
+
+## 8. 长期 Roadmap
+
+### V2：实验平台化
+
+- OpenTelemetry/OpenInference 接入。
+- Phoenix 或 Langfuse 集成。
+- PostgreSQL 替代 SQLite 的可选存储。
+- Web Dashboard。
+- 数据集、Prompt、模型和配置版本管理。
+- 人工标注和 Judge 校准。
+
+### V3：Agent 生态与安全
+
+- LangGraph、CrewAI、AutoGen Adapter。
+- 浏览器 Agent 和多 Agent 评测。
+- 沙箱工具环境。
+- 故障注入和模拟用户。
+- Prompt Injection、越权和数据泄露测试。
+- Human-in-the-loop 审批和审计日志。
+
+### V4：自动优化与生产化
+
+- 自动生成测试集。
+- 自动发现失败模式。
+- 自动生成多个优化候选。
+- 自动运行优化实验。
+- 指标不达标自动回滚。
+- 分布式任务执行、多租户、权限和线上监控。
+
+## 9. 项目差异化定位
+
+不与 DeepEval、Ragas、Langfuse 或 Phoenix 竞争全部能力，而是重点解决：
+
+```text
+面向 Java 的 Agent 评测
++ 面向 Kubernetes/Prometheus 的运维场景
++ 工具轨迹和安全动作评测
++ 故障证据链与失败归因
++ 评测结果到 CI 质量门禁
+```
+
+最终项目介绍可以表述为：
+
+> DeepEvalOpt 是一个面向 Kubernetes 和 Prometheus 运维 Agent 的可插拔评测与回归测试平台，支持统一 Trace、工具轨迹分析、LLM-as-a-Judge、故障归因和 CI 质量门禁。
+## 10. AgentLens 的核心亮点与生态策略
+
+### 10.1 为什么用户选择 AgentLens
+
+如果用户只需要评估 Prompt、RAG 或最终回答，DeepEval 等成熟工具已经足够。AgentLens 的差异化来自 Agent 可靠性问题：
+
+- 跨 HTTP、CLI、Java 和 Python Agent 的统一接入。
+- 将完整行为 Trace 作为一等对象，而不仅是最终答案。
+- 评估计划、工具选择、工具参数、观察结果、状态变化和最终动作。
+- 评估允许工具、禁止工具、审批工具、危险参数和越权行为。
+- 理解 Prometheus、Kubernetes、日志、告警和故障注入等上下文。
+- 将失败定位到 Prompt、Planning、Tool Selection、Retrieval、Execution 或 Final Answer 层。
+- 将评测结果转化为实验对比和 CI 质量门禁。
+- 支持本地模型、内网部署、数据不出域和审计留痕。
+
+AgentLens 不是简单的“Java 版 DeepEval”，而是面向 Agent 行为可靠性、工具安全和持续回归的通用平台。
+
+### 10.2 借鉴 DeepEval，而不是重复造轮子
+
+AgentLens 应参考 DeepEval 的优秀设计：
+
+- Metric 抽象。
+- 测试用例组织。
+- LLM-as-a-Judge。
+- RAG 指标和 Agent 任务评测。
+- 自定义评测器。
+- 评测理由、证据和评分明细。
+- 评测缓存和类似 pytest 的回归体验。
+
+AgentLens 自己负责跨 Agent Adapter、统一 Trace、工具安全、运维场景、失败归因、实验管理和 CI 门禁。RAG、Faithfulness、Answer Relevancy 等通用指标可以通过可插拔实现复用，而不要求重新实现所有已有能力。
+
+### 10.3 兼容与集成路线
+
+长期增加 `DeepEvalAdapter`，允许用户将 DeepEval 作为一个外部评测后端：
+
+```text
+AgentLens Adapter
+  -> AgentLens Unified Trace
+  -> DeepEvalAdapter / Native Evaluator
+  -> Unified EvaluationResult
+  -> Diagnosis / Compare / CI Gate
+```
+
+这样用户可以继续使用 DeepEval 的成熟 RAG 指标，同时使用 AgentLens 的跨语言接入、工具轨迹、安全策略、运维故障和回归能力。
+
+最终项目介绍可以表述为：
+
+> AgentLens 是一个通用的 AI Agent 可观测、评测、诊断和回归测试平台。它借鉴 DeepEval 的指标化评测与 LLM-as-a-Judge 设计，并进一步支持跨框架 Agent 接入、工具轨迹、安全动作、运维故障证据链和 CI 质量门禁。
