@@ -46,7 +46,7 @@ public final class RegressionGate {
     /** Level 3: pass^k comparison over repeated runs of the same scenario set. */
     public GateResult compare(PassK.Summary baseline, PassK.Summary candidate) {
         List<String> reasons = new ArrayList<>();
-        if (candidate.passPowK() < baseline.passPowK() - maxPassPowKDrop + 1e-9) {
+        if (candidate.passPowK() < baseline.passPowK() - maxPassPowKDrop - 1e-9) {
             reasons.add(String.format("pass^k dropped %.4f -> %.4f (allowed drop %.4f)",
                     baseline.passPowK(), candidate.passPowK(), maxPassPowKDrop));
         }

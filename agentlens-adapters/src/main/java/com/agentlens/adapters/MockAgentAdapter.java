@@ -33,12 +33,35 @@ public final class MockAgentAdapter implements AgentAdapter {
     static final String ALLOWED_KEY = "allowedTools";
     static final String FORBIDDEN_KEY = "forbiddenTools";
 
+    private final String version;
+    private final String forcedBehavior;
+
+    /** Default adapter honoring the per-task agentBehavior context. */
+    public MockAgentAdapter() {
+        this.version = "behavior";
+        this.forcedBehavior = null;
+    }
+
+    /**
+     * Version-pinned adapter that overrides every task's behavior, modeling a
+     * specific agent release (e.g. "v1" = always correct, "v2-bad" = flaky).
+     * Used for baseline/candidate release comparisons.
+     */
+    public MockAgentAdapter(String forcedBehavior) {
+        this.version = forcedBehavior;
+        this.forcedBehavior = forcedBehavior;
+    }
+
     @Override
     public String name() { return "mock"; }
 
+    /** Version label distinguishing release-pinned adapters in reports. */
+    public String version() { return version; }
+
     @Override
     public AgentRun run(AgentTask task) {
-        String behavior = String.valueOf(task.context().getOrDefault(BEHAVIOR_KEY, "correct"));
+        String behavior = forcedBehavior != null ? forcedBehavior
+                : String.valueOf(task.context().getOrDefault(BEHAVIOR_KEY, "correct"));
         Instant started = Instant.now();
         return switch (behavior) {
             case "wrong_tool" -> wrongTool(task, started);
