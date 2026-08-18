@@ -29,14 +29,15 @@ jobs:
 
       - name: CLI run (20 scenarios, pass^k, 5 repeats)
         run: |
-          JACKSON=$(find ~/.m2/repository/com/fasterxml -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' | tr '\n' ':')
-          java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes:$JACKSON" \
-            com.agentlens.cli.AgentLensApp run --scenarios data/scenarios/ops-scenarios.json --repeats 5 || test $? -eq 1
+          CP="agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes"
+          for jar in $(find ~/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.17.2 \
+            ~/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.17.2 \
+            ~/.m2/repository/com/fasterxml/jackson/core/jackson-annotations/2.17.2 \
+            ~/.m2/repository/com/fasterxml/jackson/module/jackson-module-parameter-names/2.17.2 \
+            ~/.m2/repository/org/xerial/sqlite-jdbc/3.46.1.0 -name '*.jar'); do CP="$CP:$jar"; done
+          java -cp "$CP" com.agentlens.cli.AgentLensApp run --scenarios data/scenarios/ops-scenarios.json --repeats 5 || test $? -eq 1
+          java -cp "$CP" com.agentlens.cli.AgentLensApp compare --baseline correct --candidate correct --repeats 5
+          java -cp "$CP" com.agentlens.cli.AgentLensApp compare --baseline correct --candidate flaky --repeats 5 || test $? -eq 1
+          RUN_ID=$(java -cp "$CP" com.agentlens.cli.AgentLensApp show --run list | head -1)
+          java -cp "$CP" com.agentlens.cli.AgentLensApp show --run "$RUN_ID" | grep -q "evaluation:"
 
-      - name: CLI compare (release gate rejects bad candidate)
-        run: |
-          JACKSON=$(find ~/.m2/repository/com/fasterxml -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' | tr '\n' ':')
-          java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes:$JACKSON" \
-            com.agentlens.cli.AgentLensApp compare --baseline correct --candidate correct --repeats 5
-          java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes:$JACKSON" \
-            com.agentlens.cli.AgentLensApp compare --baseline correct --candidate flaky --repeats 5 || test $? -eq 1

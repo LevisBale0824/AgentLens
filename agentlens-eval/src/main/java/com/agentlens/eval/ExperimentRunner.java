@@ -15,6 +15,7 @@ public final class ExperimentRunner {
     private final JsonlRunStore store;
     private final int concurrency;
     private final long timeoutMs;
+    private java.util.function.BiConsumer<AgentRun, EvaluationRun> runListener;
 
     public ExperimentRunner(AgentAdapter adapter, EvaluatorRegistry evaluators, JsonlRunStore store, int concurrency) {
         this(adapter, evaluators, store, concurrency, 0);
@@ -25,6 +26,15 @@ public final class ExperimentRunner {
         this.adapter = adapter; this.evaluators = evaluators; this.store = store;
         this.concurrency = Math.max(1, concurrency);
         this.timeoutMs = timeoutMs;
+    }
+
+    /**
+     * Optional observer invoked after each successful run+evaluation, e.g. to
+     * persist full traces into SqliteRunStore. Exceptions propagate as task failures.
+     */
+    public ExperimentRunner onRunCompleted(java.util.function.BiConsumer<AgentRun, EvaluationRun> listener) {
+        this.runListener = listener;
+        return this;
     }
 
     /**
@@ -87,6 +97,7 @@ public final class ExperimentRunner {
             EvaluationRun evaluation = new EvaluationRun(run.runId(), task.id(), adapter.name(), "dev",
                     run.startedAt(), evaluators.evaluate(task, run),
                     Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens()));
+            if (runListener != null) runListener.accept(run, evaluation);
             return new TaskOutcome(evaluation, null);
         } catch (Exception e) {
             return new TaskOutcome(null, new TaskFailure(task.id(), rootMessage(e)));

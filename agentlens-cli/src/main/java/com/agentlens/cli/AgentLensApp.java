@@ -26,6 +26,54 @@ import java.util.Set;
  */
 public final class AgentLensApp {
     private static final String DEFAULT_SCENARIOS = "data/scenarios/ops-scenarios.json";
+    private static final String DEFAULT_DB = "output/runs.db";
+
+    /** Attaches SQLite persistence (full trace + evaluation) to a runner. */
+    private static ExperimentRunner withSqlite(ExperimentRunner runner, String dbPath) throws Exception {
+        var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(dbPath));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try { sqlite.close(); } catch (Exception ignored) {}
+        }));
+        return runner.onRunCompleted((run, evaluation) -> {
+            try {
+                sqlite.saveRun(run, evaluation.agentName());
+                sqlite.saveEvaluation(evaluation);
+            } catch (Exception e) {
+                throw new IllegalStateException("sqlite persistence failed for " + run.runId(), e);
+            }
+        });
+    }
+
+    /** Restores and prints a full run (trace timeline + evaluation) by run id. */
+    private static void show(Map<String, String> opts) throws Exception {
+        String runId = opts.get("run");
+        if (runId == null || runId.isBlank()) {
+            System.err.println("usage: show --run RUN_ID  (run ids listed with no --run)");
+            System.exit(2);
+        }
+        try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
+            if (runId.equals("list")) {
+                sqlite.listRuns().forEach(id -> System.out.println(id));
+                return;
+            }
+            var runOpt = sqlite.loadRun(runId);
+            if (runOpt.isEmpty()) {
+                System.err.println("run not found: " + runId);
+                System.exit(2);
+            }
+            var run = runOpt.get();
+            System.out.printf("run %s%n  task=%s status=%s duration=%dms tokens=%d%n",
+                    run.runId(), run.taskId(), run.status(), run.durationMs(), run.totalTokens());
+            System.out.printf("  answer=%s%n", run.finalAnswer());
+            run.events().forEach(e -> System.out.printf("  %-13s %-22s %dms %s%n",
+                    e.type(), e.name(), e.durationMs(), e.attributes()));
+            sqlite.loadEvaluation(runId).ifPresentOrElse(ev -> {
+                System.out.println("  evaluation:");
+                ev.results().forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
+                        r.evaluator(), r.passed(), r.reason()));
+            }, () -> System.out.println("  evaluation: none recorded"));
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         String command = args.length > 0 && !args[0].startsWith("--") ? args[0] : "run";
@@ -33,10 +81,11 @@ public final class AgentLensApp {
         switch (command) {
             case "run" -> run(opts);
             case "compare" -> compare(opts);
+            case "show" -> show(opts);
             case "demo" -> demo(opts);
             default -> {
                 System.err.println("unknown command: " + command);
-                System.err.println("usage: run [--scenarios PATH] [--repeats K] | compare --baseline B --candidate B | demo");
+                System.err.println("usage: run [...] | compare --baseline B --candidate B | show --run ID | demo");
                 System.exit(2);
             }
         }
@@ -53,12 +102,13 @@ public final class AgentLensApp {
         System.out.printf("loaded %d scenarios from %s, repeats=%d%n", scenarios.size(), scenariosPath, repeats);
 
         List<AgentTask> tasks = scenarios.stream().map(Scenario::toTask).toList();
-        var runner = new ExperimentRunner(new MockAgentAdapter(),
+        var runner = withSqlite(new ExperimentRunner(new MockAgentAdapter(),
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
                         .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden)),
-                new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4);
+                new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
+                opts.getOrDefault("db", DEFAULT_DB));
 
         var batch = runner.run(tasks);
         System.out.printf("single batch: runs=%d, failures=%d, p50=%dms, p95=%dms, max=%dms%n",
@@ -115,12 +165,13 @@ public final class AgentLensApp {
 
     private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats)
             throws Exception {
-        var runner = new ExperimentRunner(new MockAgentAdapter(behavior),
+        var runner = withSqlite(new ExperimentRunner(new MockAgentAdapter(behavior),
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
                         .register(new ToolPolicyEvaluator(Set.of(), Set.of())),
-                new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4);
+                new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
+                DEFAULT_DB);
         var byTask = runner.runRepeated(tasks, repeats);
         return PassK.summarize(byTask);
     }
@@ -158,7 +209,8 @@ public final class AgentLensApp {
 
     private static Map<String, String> parseOptions(String[] args, String command) {
         Map<String, String> opts = new java.util.HashMap<>();
-        int start = "run".equals(command) || "demo".equals(command) || "compare".equals(command) ? 1 : 0;
+        int start = "run".equals(command) || "demo".equals(command) || "compare".equals(command)
+                || "show".equals(command) ? 1 : 0;
         for (int i = start; i < args.length - 1; i++)
             if (args[i].startsWith("--")) opts.put(args[i].substring(2), args[i + 1]);
         return opts;
