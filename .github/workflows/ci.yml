@@ -21,8 +21,8 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Build and run tests
-        run: mvn --batch-mode clean verify
+      - name: Build, test and install modules
+        run: mvn --batch-mode clean install
 
       - name: CLI demo (smoke)
         run: java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes" com.agentlens.cli.AgentLensApp demo
