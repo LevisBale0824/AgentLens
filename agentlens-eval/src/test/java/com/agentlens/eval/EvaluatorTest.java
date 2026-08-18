@@ -13,7 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class EvaluatorTest {
     @Test
     void mockAgentPassesBasicEvaluators() throws Exception {
-        AgentTask task = new AgentTask("t1", "inspect service", Map.of(), 5);
+        AgentTask task = new AgentTask("t1", "inspect service", Map.of(
+                "allowedTools", java.util.List.of("query_prometheus")), 5);
         var run = new MockAgentAdapter().run(task);
         var results = new EvaluatorRegistry()
                 .register(new TaskCompletionEvaluator())
