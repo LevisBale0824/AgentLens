@@ -1,5 +1,7 @@
 # AgentLens 近期任务清单
 
+> **v0.1.0 状态速览（2026-08）**：P0 全部完成；P1-1/2/3/4/5/6 完成（SQLite 存储含全量 Trace 持久化与按 run ID 还原）；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎。CI 全链路自动验证。剩余重点：HTTP/CLI Adapter 实战接入真实 LLM（P0-3 增强）、AIOpsLab 接入（P2-2）、Docker Demo、Web 报告（P2-4）。
+
 ## 优先级定义
 
 - **P0：必须优先完成**。阻塞后续开发，或决定项目架构是否成立。

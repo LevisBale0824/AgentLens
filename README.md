@@ -38,7 +38,7 @@ flaky 候选版被门禁拒绝——间歇性失败不会被平均分掩盖。�
 需要 JDK 17+ 和 Maven 3.8+：
 
 ```bash
-mvn clean verify        # 构建并运行全部测试（31 个）
+mvn clean verify        # 构建并运行全部测试（39 个）
 ```
 
 CLI 命令：
@@ -49,6 +49,10 @@ AgentLensApp run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden
 
 # baseline/candidate 发版对比（核心演示）
 AgentLensApp compare --baseline correct --candidate flaky [--scenarios PATH] [--repeats K]
+
+# 按 run ID 还原完整评测（SQLite 持久化：trace 时间线 + 评测结果）
+AgentLensApp show --run RUN_ID
+AgentLensApp show --run list          # 列出全部 run ID
 
 # 冒烟测试
 AgentLensApp demo
@@ -77,7 +81,11 @@ agentlens-cli        命令行入口（run / compare / demo）
 - pass@k / 平均通过率（能力上限 / 期望）
 - 分层失败视图：稳定通过 / 间歇失败 / 稳定失败
 
+**诊断引擎**（[P1-4](docs/ROADMAP.md)）——直接分析 Trace 的规则引擎，7 条规则 × 5 个层级（safety / tool_selection / execution / final_answer 等），每条诊断携带 `trace[i]` 证据链引用，可与 SQLite 持久化的 run 逐条对照审计。
+
 **Mock Agent 行为库**——5 种可预期失败模式验证平台能准确发现已知问题：正确诊断、错误工具选择、越权操作、循环调用、间歇失败（flaky）。
+
+**存储**——JSONL 摘要 + SQLite 全量（runs / events / evaluations 三表），按 run ID 完整还原任何一次评测。
 
 ## 设计原则
 

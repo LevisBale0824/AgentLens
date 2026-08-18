@@ -253,17 +253,19 @@ LLM Judge 只处理难以规则化的维度：解释质量、计划合理性、�
 
 ## 7. V1 验收标准
 
-- 支持 HTTP 和 CLI 两类 Agent。
-- 至少一个 Mock Agent 和一个自研运维 Agent。
-- 至少一个公开运维环境或公开 Benchmark 接入。
-- 至少 20 个可复现故障场景。
-- 能记录完整 Agent Trace。
-- 能识别工具错误、越权操作和循环调用。
-- 能输出结构化诊断结果。
-- 能比较 baseline 与 candidate。
-- 能在 CI 中阻止指标回退。
-- `docker compose up` 后可以运行完整 Demo。
-- 测试覆盖核心领域模型、评测器、存储和 Adapter。
+截至 v0.1.0 的达成情况：
+
+- 支持 HTTP 和 CLI 两类 Agent。（Adapter 骨架就绪；实战接入待接真实 LLM，见 V1.1）
+- 至少一个 Mock Agent 和一个自研运维 Agent。（Mock Agent 行为库完成：correct/wrong_tool/forbidden_action/loop/flaky）
+- 至少一个公开运维环境或公开 Benchmark 接入。（待 V1.1：AIOpsLab）
+- 至少 20 个可复现故障场景。✅（data/scenarios/ops-scenarios.json，20 个）
+- 能记录完整 Agent Trace。✅（统一事件模型 + SQLite 全量持久化 + CLI show 按 run ID 还原）
+- 能识别工具错误、越权操作和循环调用。✅（ToolPolicyEvaluator + DiagnosisEngine trace 级规则）
+- 能输出结构化诊断结果。✅（7 规则 × 5 层级，证据链 trace[i] 引用）
+- 能比较 baseline 与 candidate。✅（CLI compare + pass^k 对比门禁）
+- 能在 CI 中阻止指标回退。✅（GitHub Actions：测试 + run/compare/show 端到端，含门禁拒绝断言）
+- `docker compose up` 后可以运行完整 Demo。（待 V1.1）
+- 测试覆盖核心领域模型、评测器、存储和 Adapter。✅（39 个测试）
 
 ### 7.1 pass^k 指标与发版稳定性门禁
 
@@ -304,12 +306,12 @@ AgentLens 的差异化定位决定了 pass^k 必要：卖点是"Agent 行为可�
 - 确定性对象（Mock Agent、纯规则工具链）每次 Trace 完全相同，跑 k 次是纯浪费——pass^k 只对含 LLM 决策的真实 Agent 有信息量。
 - k 次叠加可能撞 CI 超时，需允许缩减场景集或异步执行后聚合。
 
-#### 7.1.5 交付物
+#### 7.1.5 交付物（v0.1.0 已全部落地）
 
-- `PassK` 聚合器：同 scenario 跑 k 次输出 pass^k / pass@k / 单次通过率。
-- 分层失败视图：区分"稳定通过 / 间歇失败 / 稳定失败"三层，输出到 `DiagnosisEngine`，比单一数字更有诊断价值。
-- `RegressionGate` 规则扩展：pass^k 下降幅度阈值（可配置）。
-- `--repeats k` CLI 参数。
+- ✅ `PassK` 聚合器：同 scenario 跑 k 次输出 pass^k / pass@k / 单次通过率。
+- ✅ 分层失败视图：区分"稳定通过 / 间歇失败 / 稳定失败"三层（STABLE_PASS/FLAKY/STABLE_FAIL）。
+- ✅ `RegressionGate` 规则扩展：pass^k 下降幅度阈值（可配置）+ requireStable 发版检查。
+- ✅ `--repeats k` CLI 参数（run / compare 子命令）。
 
 ## 8. 长期 Roadmap
 
