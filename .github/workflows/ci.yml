@@ -29,12 +29,18 @@ jobs:
 
       - name: CLI run (20 scenarios, pass^k, 5 repeats)
         run: |
-          CP="agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes"
-          for jar in $(find ~/.m2/repository/com/fasterxml -path '*2.17.2*' -name '*.jar' ! -name '*sources*' ! -name '*javadoc*'; \
-            find ~/.m2/repository/org/xerial -name 'sqlite-jdbc-*.jar' ! -name '*sources*' | head -1); do CP="$CP:$jar"; done
-          java -cp "$CP" com.agentlens.cli.AgentLensApp run --scenarios data/scenarios/ops-scenarios.json --repeats 5 || test $? -eq 1
-          java -cp "$CP" com.agentlens.cli.AgentLensApp compare --baseline correct --candidate correct --repeats 5
-          java -cp "$CP" com.agentlens.cli.AgentLensApp compare --baseline correct --candidate flaky --repeats 5 || test $? -eq 1
-          RUN_ID=$(java -cp "$CP" com.agentlens.cli.AgentLensApp show --run list | head -1)
-          java -cp "$CP" com.agentlens.cli.AgentLensApp show --run "$RUN_ID" | grep -q "evaluation:"
+          mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
+            -Dexec.args="run --scenarios data/scenarios/ops-scenarios.json --repeats 5" || test $? -eq 1
+          mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
+            -Dexec.args="compare --baseline correct --candidate correct --repeats 5"
+          mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
+            -Dexec.args="compare --baseline correct --candidate flaky --repeats 5" || test $? -eq 1
+
+      - name: CLI show (SQLite restore by run id)
+        run: |
+          RUN_ID=$(mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
+            -Dexec.args="show --run list" 2>/dev/null | grep -E '^[0-9a-f-]{36}$' | head -1)
+          echo "restoring run: $RUN_ID"
+          mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
+            -Dexec.args="show --run $RUN_ID" 2>/dev/null | grep -q "evaluation:"
 
