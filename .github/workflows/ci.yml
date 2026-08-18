@@ -29,6 +29,6 @@ jobs:
 
       - name: CLI run (20 scenarios, pass^k, 5 repeats)
         run: |
-          mvn -q dependency:build-classpath -pl agentlens-eval -Dmdep.outputFile=target/cp.txt
-          java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes:$(cat agentlens-eval/target/cp.txt)" \
+          JACKSON=$(find ~/.m2/repository/com/fasterxml -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' | tr '\n' ':')
+          java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes:$JACKSON" \
             com.agentlens.cli.AgentLensApp run --scenarios data/scenarios/ops-scenarios.json --repeats 5 || test $? -eq 1
