@@ -44,3 +44,10 @@ jobs:
           mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
             -Dexec.args="show --run $RUN_ID" 2>/dev/null | grep -q "evaluation:"
 
+      - name: CLI report (HTML from SQLite)
+        run: |
+          mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
+            -Dexec.args="report" 2>/dev/null | grep -q "report written"
+          grep -q "AgentLens Evaluation Report" output/report.html
+          grep -q "STABLE_" output/report.html
+

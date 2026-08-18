@@ -44,6 +44,17 @@ public final class AgentLensApp {
         });
     }
 
+    /** Generates a self-contained HTML report from the SQLite store. */
+    private static void report(Map<String, String> opts) throws Exception {
+        Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
+        Path out = Path.of(opts.getOrDefault("out", "output/report.html"));
+        try (var sqlite = new com.agentlens.eval.SqliteRunStore(db)) {
+            Path written = new com.agentlens.eval.ReportGenerator().generate(sqlite, out);
+            System.out.printf("report written: %s (%d bytes)%n", written.toAbsolutePath(),
+                    java.nio.file.Files.size(written));
+        }
+    }
+
     /** Restores and prints a full run (trace timeline + evaluation) by run id. */
     private static void show(Map<String, String> opts) throws Exception {
         String runId = opts.get("run");
@@ -82,10 +93,11 @@ public final class AgentLensApp {
             case "run" -> run(opts);
             case "compare" -> compare(opts);
             case "show" -> show(opts);
+            case "report" -> report(opts);
             case "demo" -> demo(opts);
             default -> {
                 System.err.println("unknown command: " + command);
-                System.err.println("usage: run [...] | compare --baseline B --candidate B | show --run ID | demo");
+                System.err.println("usage: run [...] | compare --baseline B --candidate B | show --run ID | report [--db PATH] [--out PATH] | demo");
                 System.exit(2);
             }
         }
@@ -210,7 +222,7 @@ public final class AgentLensApp {
     private static Map<String, String> parseOptions(String[] args, String command) {
         Map<String, String> opts = new java.util.HashMap<>();
         int start = "run".equals(command) || "demo".equals(command) || "compare".equals(command)
-                || "show".equals(command) ? 1 : 0;
+                || "show".equals(command) || "report".equals(command) ? 1 : 0;
         for (int i = start; i < args.length - 1; i++)
             if (args[i].startsWith("--")) opts.put(args[i].substring(2), args[i + 1]);
         return opts;

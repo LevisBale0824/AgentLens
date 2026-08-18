@@ -191,6 +191,15 @@ public final class SqliteRunStore implements AutoCloseable {
         }
     }
 
+    /** Loads every run with its evaluation, newest first. Report source of truth. */
+    public List<Map.Entry<AgentRun, Optional<EvaluationRun>>> loadAll() throws IOException {
+        List<Map.Entry<AgentRun, Optional<EvaluationRun>>> all = new ArrayList<>();
+        for (String runId : listRuns()) {
+            all.add(Map.entry(loadRun(runId).orElseThrow(), loadEvaluation(runId)));
+        }
+        return List.copyOf(all);
+    }
+
     private List<AgentEvent> loadEvents(String runId) throws SQLException, IOException {
         PreparedStatement stmt = conn.prepareStatement(
                 "SELECT * FROM events WHERE run_id = ? ORDER BY seq");
