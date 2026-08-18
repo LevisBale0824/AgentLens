@@ -34,7 +34,7 @@ public final class DiagnosisEngine {
                 diagnosis.evidence(),
                 diagnosis.confidence(),
                 1,
-                0,
+                1,
                 "CANDIDATE",
                 diagnosis.metadata()
         )).toList();
