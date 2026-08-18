@@ -24,8 +24,11 @@ jobs:
       - name: Build and run tests
         run: mvn --batch-mode clean verify
 
-      - name: CLI demo (single run)
-        run: java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes" com.agentlens.cli.AgentLensApp
+      - name: CLI demo (smoke)
+        run: java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes" com.agentlens.cli.AgentLensApp demo
 
-      - name: CLI demo (pass^k, 5 repeats)
-        run: java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes" com.agentlens.cli.AgentLensApp --repeats 5
+      - name: CLI run (20 scenarios, pass^k, 5 repeats)
+        run: |
+          mvn -q dependency:build-classpath -pl agentlens-eval -Dmdep.outputFile=target/cp.txt
+          java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes:$(cat agentlens-eval/target/cp.txt)" \
+            com.agentlens.cli.AgentLensApp run --scenarios data/scenarios/ops-scenarios.json --repeats 5 || test $? -eq 1
