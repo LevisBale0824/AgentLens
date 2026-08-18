@@ -30,11 +30,8 @@ jobs:
       - name: CLI run (20 scenarios, pass^k, 5 repeats)
         run: |
           CP="agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes"
-          for jar in $(find ~/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.17.2 \
-            ~/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.17.2 \
-            ~/.m2/repository/com/fasterxml/jackson/core/jackson-annotations/2.17.2 \
-            ~/.m2/repository/com/fasterxml/jackson/module/jackson-module-parameter-names/2.17.2 \
-            ~/.m2/repository/org/xerial/sqlite-jdbc/3.46.1.0 -name '*.jar'); do CP="$CP:$jar"; done
+          for jar in $(find ~/.m2/repository/com/fasterxml -path '*2.17.2*' -name '*.jar' ! -name '*sources*' ! -name '*javadoc*'; \
+            find ~/.m2/repository/org/xerial -name 'sqlite-jdbc-*.jar' ! -name '*sources*' | head -1); do CP="$CP:$jar"; done
           java -cp "$CP" com.agentlens.cli.AgentLensApp run --scenarios data/scenarios/ops-scenarios.json --repeats 5 || test $? -eq 1
           java -cp "$CP" com.agentlens.cli.AgentLensApp compare --baseline correct --candidate correct --repeats 5
           java -cp "$CP" com.agentlens.cli.AgentLensApp compare --baseline correct --candidate flaky --repeats 5 || test $? -eq 1

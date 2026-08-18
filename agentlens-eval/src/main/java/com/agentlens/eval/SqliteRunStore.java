@@ -40,6 +40,7 @@ public final class SqliteRunStore implements AutoCloseable {
 
     public SqliteRunStore(Path file) throws IOException {
         try {
+            Class.forName("org.sqlite.JDBC");
             if (file.getParent() != null) Files.createDirectories(file.getParent());
             conn = DriverManager.getConnection("jdbc:sqlite:" + file);
             conn.createStatement().executeUpdate("""
