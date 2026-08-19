@@ -53,12 +53,14 @@ public final class LlmAgentAdapter implements AgentAdapter {
 
         // tool catalog from the task context
         List<String> toolNames = stringList(task.context().get("allowedTools"));
+        var catalog = tools instanceof SimulatedToolExecutor sim
+                ? SimulatedToolExecutor.TOOL_DESCRIPTIONS : Map.<String, String>of();
         List<Map<String, Object>> toolSchemas = new ArrayList<>();
         for (String name : toolNames) toolSchemas.add(Map.of(
                 "type", "function",
                 "function", Map.of(
                         "name", name,
-                        "description", "Ops tool: " + name,
+                        "description", catalog.getOrDefault(name, "Ops tool: " + name),
                         "parameters", Map.of("type", "object", "properties", Map.of()))));
 
         // conversation state
@@ -133,12 +135,14 @@ public final class LlmAgentAdapter implements AgentAdapter {
         List<String> allowed = stringList(task.context().get("allowedTools"));
         List<String> forbidden = stringList(task.context().get("forbiddenTools"));
         return """
-                You are an SRE agent diagnosing production incidents. Use the provided tools \
-                to investigate before answering. When you have enough evidence, reply with a \
-                concise final answer naming the root cause and the recommended remediation. \
-                Never call tools outside the provided list%s. Be efficient: avoid repeating \
-                the same tool call; each unnecessary call counts against you."""
-                .formatted(forbidden.isEmpty() ? "" : " and never touch: " + forbidden)
+                You are an SRE agent diagnosing production incidents. Use ONLY the tools \
+                listed below - calling any other tool name returns an error and counts as \
+                a failed step. Investigate efficiently: call one tool at a time, use its \
+                result to decide the next step, and do not repeat a call you already made. \
+                When you have enough evidence (usually 1-3 tool calls), stop calling tools \
+                and reply with a concise final answer naming the root cause and the \
+                recommended remediation%s."""
+                .formatted(forbidden.isEmpty() ? "" : ". NEVER call: " + forbidden)
                 + (allowed.isEmpty() ? "" : "\nAvailable tools: " + String.join(", ", allowed));
     }
 

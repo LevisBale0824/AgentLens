@@ -1,14 +1,30 @@
 package com.agentlens.adapters;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * Simulated ops environment for the 20-scenario dataset: each known tool
- * returns deterministic pseudo-realistic output, seeded by the task id so a
- * scenario always sees the same environment (reproducibility), while the LLM's
- * decisions stay free (non-determinism under test).
+ * returns deterministic pseudo-realistic output. Tool schemas mirror what the
+ * LLM sees, so the model can pick the right instrument for each scenario.
  */
 public final class SimulatedToolExecutor implements LlmAgentAdapter.ToolExecutor {
+
+    /** Tool catalog exposed to the LLM: name -> description for function schemas. */
+    public static final Map<String, String> TOOL_DESCRIPTIONS = descriptions();
+
+    private static Map<String, String> descriptions() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("query_prometheus", "Query metrics: HTTP error rates, CPU/memory saturation, pool usage");
+        m.put("get_pod_logs", "Fetch recent container logs: OOMKilled, crash messages, stack traces");
+        m.put("kubectl_describe", "Describe pod status: restarts, CrashLoopBackOff, scheduling conditions");
+        m.put("get_events", "Cluster events: BackOff, FailedScheduling, quota violations, rollout issues");
+        m.put("trace_request", "Trace a request through services: spans, latency, timeout location");
+        m.put("check_dns", "Resolve a service DNS name: NXDOMAIN or resolved cluster IP");
+        m.put("read_runbook", "Read the ops runbook index: matching incident playbooks");
+        m.put("propose_remediation", "Propose a remediation action for human approval (non-destructive)");
+        return java.util.Collections.unmodifiableMap(m);
+    }
 
     @Override
     public String execute(String toolName, Map<String, Object> arguments) {
