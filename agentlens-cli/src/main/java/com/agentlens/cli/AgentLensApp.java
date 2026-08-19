@@ -1,8 +1,9 @@
 package com.agentlens.cli;
 
-import com.agentlens.adapters.MockAgentAdapter;
+import com.agentlens.core.AgentAdapter;
 import com.agentlens.core.AgentRun;
 import com.agentlens.core.AgentTask;
+import com.agentlens.core.AdapterRegistry;
 import com.agentlens.eval.EvaluatorRegistry;
 import com.agentlens.eval.ExperimentRunner;
 import com.agentlens.eval.PassK;
@@ -55,6 +56,103 @@ public final class AgentLensApp {
         }
     }
 
+    /** Imports an existing DSH session log, maps it to the unified trace, and runs evaluators + diagnosis. */
+    private static void importSession(Map<String, String> opts) throws Exception {
+        String session = opts.get("session");
+        if (session == null || session.isBlank()) {
+            System.err.println("usage: import --session PATH (a DSH session.jsonl or session.jsonl.zstd) [--task ID]");
+            System.exit(2);
+        }
+        var events = com.agentlens.adapters.dsh.DshSessionLogReader.read(Path.of(session));
+        var mapped = com.agentlens.adapters.dsh.DshTraceMapper.toRun(events,
+                opts.getOrDefault("task", "imported"));
+        AgentRun run = mapped.run();
+        System.out.printf("session %s%n  cwd=%s turns=%d events=%d status=%s duration=%dms%n",
+                mapped.sessionId(), mapped.cwd(), mapped.turns(), run.events().size(),
+                run.status(), run.durationMs());
+        System.out.printf("  instruction=%.120s%n", mapped.instruction());
+        System.out.printf("  tools called: %d, tool results: %d%n",
+                run.events().stream().filter(e -> e.type() == com.agentlens.core.EventType.TOOL_CALL).count(),
+                run.events().stream().filter(e -> e.type() == com.agentlens.core.EventType.TOOL_RESULT).count());
+        run.events().stream().limit(40).forEach(e -> System.out.printf("  %-13s %-22s %s%n",
+                e.type(), e.name(), e.attributes()));
+
+        int steps = (int) run.events().stream()
+                .filter(e -> e.type() == com.agentlens.core.EventType.TOOL_CALL).count();
+        var task = new AgentTask(run.taskId(),
+                mapped.instruction() == null ? "imported session" : mapped.instruction(),
+                Map.of(), steps + 10);
+        var results = new EvaluatorRegistry()
+                .register(new TaskCompletionEvaluator())
+                .register(new RunLimitEvaluator())
+                .evaluate(task, run);
+        System.out.println("  evaluation:");
+        results.forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
+                r.evaluator(), r.passed(), r.reason()));
+        var diagnoses = new com.agentlens.eval.DiagnosisEngine().diagnose(task, run, results);
+        System.out.printf("  diagnoses: %d%n", diagnoses.size());
+        diagnoses.forEach(d -> System.out.printf("    %-15s %-45s evidence=%s%n",
+                d.layer(), d.issue(), d.evidence()));
+    }
+
+    /** Scenario-set default adapter: used when every scenario names the same adapter. */
+    private static String commonAdapter(List<Scenario> scenarios) {
+        if (scenarios.isEmpty()) return "mock";
+        var names = scenarios.stream().map(Scenario::adapter).collect(java.util.stream.Collectors.toSet());
+        return names.size() == 1 ? names.iterator().next() : "mock";
+    }
+
+    /**
+     * Live mode: runs each scenario with streaming trace display and online verdicts;
+     * with --abort-on-violation, hard violations kill the dsh process immediately.
+     */
+    private static void dshLiveRun(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
+                                   List<Scenario> scenarios, Map<String, String> opts) throws Exception {
+        boolean abort = "true".equalsIgnoreCase(opts.getOrDefault("abort-on-violation", "false"));
+        int repeats = intOf(opts.get("repeats"), 1);
+        int passed = 0, failed = 0, aborted = 0;
+
+        var registry = new EvaluatorRegistry()
+                .register(new TaskCompletionEvaluator())
+                .register(new RunLimitEvaluator())
+                .register(new ToolPolicyEvaluator(Set.of(), Set.of()));
+        var diagnosis = new com.agentlens.eval.DiagnosisEngine();
+
+        for (int repeat = 1; repeat <= repeats; repeat++) {
+            for (Scenario scenario : scenarios) {
+                var task = scenario.toTask();
+                System.out.printf("%n[%s] repeat %d/%d: %s%n", java.time.LocalTime.now(), repeat, repeats, task.id());
+                var live = new com.agentlens.adapters.dsh.DshAgentAdapter.LiveListener() {
+                    @Override public void onTraceEvent(com.agentlens.core.AgentEvent e, int i) {
+                        System.out.printf("  [%s] %-13s %-20s %s%n", java.time.LocalTime.now().withNano(0),
+                                e.type(), e.name(),
+                                e.attributes().isEmpty() ? "" : String.valueOf(e.attributes()).substring(0,
+                                        Math.min(100, String.valueOf(e.attributes()).length())));
+                    }
+                    @Override public void onVerdict(com.agentlens.core.LiveEvaluator.Verdict v) {
+                        System.out.printf("  !! %-10s %-15s %s%n", v.layer(), v.rule(), v.message());
+                    }
+                    @Override public boolean shouldAbort(com.agentlens.core.LiveEvaluator.Verdict v) {
+                        return abort;
+                    }
+                };
+                AgentRun run = dsh.run(task, live);
+                boolean hardFail = run.status() != com.agentlens.core.RunStatus.SUCCESS;
+                if (run.status() == com.agentlens.core.RunStatus.CANCELLED) aborted++;
+                else if (hardFail) failed++;
+                var results = registry.evaluate(task, run);
+                var diagnoses = diagnosis.diagnose(task, run, results);
+                System.out.printf("  => status=%s duration=%dms events=%d diagnoses=%d%n",
+                        run.status(), run.durationMs(), run.events().size(), diagnoses.size());
+                if (!run.events().isEmpty() && results.stream().noneMatch(r -> r.passed())) failed++;
+                else if (!hardFail) passed++;
+            }
+        }
+        System.out.printf("%nlive run: scenarios=%d repeats=%d passed=%d failed=%d aborted=%d%n",
+                scenarios.size(), repeats, passed, failed, aborted);
+        if (failed > 0 || aborted > 0) System.exit(1);
+    }
+
     /** Restores and prints a full run (trace timeline + evaluation) by run id. */
     private static void show(Map<String, String> opts) throws Exception {
         String runId = opts.get("run");
@@ -92,6 +190,7 @@ public final class AgentLensApp {
         switch (command) {
             case "run" -> run(opts);
             case "compare" -> compare(opts);
+            case "import" -> importSession(opts);
             case "show" -> show(opts);
             case "report" -> report(opts);
             case "demo" -> demo(opts);
@@ -113,8 +212,27 @@ public final class AgentLensApp {
         List<Scenario> scenarios = new ScenarioLoader().load(scenariosPath);
         System.out.printf("loaded %d scenarios from %s, repeats=%d%n", scenarios.size(), scenariosPath, repeats);
 
+        AdapterRegistry registry = AdapterRegistry.load();
+        String adapterName = opts.getOrDefault("adapter", commonAdapter(scenarios));
+        AgentAdapter adapter;
+        if ("llm".equals(adapterName)) {
+            adapter = llmAdapter(opts);
+            System.out.printf("adapter: llm (model=%s, endpoint=%s)%n",
+                    opts.getOrDefault("model", "qwen2.5:7b"), opts.getOrDefault("base-url", "http://localhost:11434"));
+        } else {
+            adapter = registry.get(adapterName);
+            System.out.printf("adapter: %s (available: %s)%n", adapterName, registry.names());
+        }
+
+        boolean live = "true".equalsIgnoreCase(opts.getOrDefault("live", "false"))
+                || "dsh".equals(adapterName) && "true".equalsIgnoreCase(opts.getOrDefault("abort-on-violation", "false"));
+        if (adapter instanceof com.agentlens.adapters.dsh.DshAgentAdapter dsh && live) {
+            dshLiveRun(dsh, scenarios, opts);
+            return;
+        }
+
         List<AgentTask> tasks = scenarios.stream().map(Scenario::toTask).toList();
-        var runner = withSqlite(new ExperimentRunner(new MockAgentAdapter(),
+        var runner = withSqlite(new ExperimentRunner(adapter,
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
@@ -177,7 +295,7 @@ public final class AgentLensApp {
 
     private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats)
             throws Exception {
-        var runner = withSqlite(new ExperimentRunner(new MockAgentAdapter(behavior),
+        var runner = withSqlite(new ExperimentRunner(new com.agentlens.adapters.MockAgentAdapter(behavior),
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
@@ -198,9 +316,9 @@ public final class AgentLensApp {
     }
 
     /** Original single-task demo, kept for smoke testing. */
-    private static void demo(Map<String, String> opts) {
+    private static void demo(Map<String, String> opts) throws Exception {
         AgentTask task = new AgentTask("demo-001", "inspect the service health", Map.of(), 10);
-        AgentRun run = new MockAgentAdapter().run(task);
+        AgentRun run = AdapterRegistry.load().defaultAdapter().run(task);
         var results = new EvaluatorRegistry()
                 .register(new TaskCompletionEvaluator())
                 .register(new RunLimitEvaluator())
@@ -208,6 +326,16 @@ public final class AgentLensApp {
                 .evaluate(task, run);
         System.out.printf("AgentLens demo: adapter=mock, status=%s, evaluations=%d, passed=%s%n",
                 run.status(), results.size(), results.stream().allMatch(r -> r.passed()));
+    }
+
+    /** Builds the real-LLM adapter from CLI options (OpenAI-compatible endpoint). */
+    private static AgentAdapter llmAdapter(Map<String, String> opts) {
+        return new com.agentlens.adapters.LlmAgentAdapter(
+                java.net.URI.create(opts.getOrDefault("base-url", "http://localhost:11434")),
+                opts.getOrDefault("model", "qwen2.5:7b"),
+                Double.parseDouble(opts.getOrDefault("temperature", "0.4")),
+                java.time.Duration.ofSeconds(intOf(opts.get("timeout"), 300)),
+                new com.agentlens.adapters.SimulatedToolExecutor());
     }
 
     /** Wraps a single-run batch into the repeated-runs shape (k=1) for PassK. */
@@ -222,7 +350,8 @@ public final class AgentLensApp {
     private static Map<String, String> parseOptions(String[] args, String command) {
         Map<String, String> opts = new java.util.HashMap<>();
         int start = "run".equals(command) || "demo".equals(command) || "compare".equals(command)
-                || "show".equals(command) || "report".equals(command) ? 1 : 0;
+                || "show".equals(command) || "report".equals(command) || "import".equals(command)
+                ? 1 : 0;
         for (int i = start; i < args.length - 1; i++)
             if (args[i].startsWith("--")) opts.put(args[i].substring(2), args[i + 1]);
         return opts;
