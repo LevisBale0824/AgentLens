@@ -1,0 +1,7 @@
+services:
+  agentlens-demo:
+    build: .
+    image: agentlens:0.1.0
+    container_name: agentlens-demo
+    volumes:
+      - ./output:/app/output

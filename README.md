@@ -38,7 +38,7 @@ flaky 候选版被门禁拒绝——间歇性失败不会被平均分掩盖。�
 需要 JDK 17+ 和 Maven 3.8+：
 
 ```bash
-mvn clean verify        # 构建并运行全部测试（39 个）
+mvn clean verify        # 构建并运行全部测试（42 个）
 ```
 
 CLI 命令：
@@ -54,8 +54,20 @@ AgentLensApp compare --baseline correct --candidate flaky [--scenarios PATH] [--
 AgentLensApp show --run RUN_ID
 AgentLensApp show --run list          # 列出全部 run ID
 
+# 自包含 HTML 报告（run 表 / pass^k 分层 / trace 时间线 / 评测结果）
+AgentLensApp report [--db PATH] [--out PATH]
+
 # 冒烟测试
 AgentLensApp demo
+```
+
+Docker 一键演示（V1 验收项）：
+
+```bash
+docker compose up --build
+# 容器内自动执行：20 场景 run (pass^k, 3 repeats) → 好版本放行 → flaky 版本
+# 被门禁拦截 (pass^k 1.000 → 0.250) → 生成自包含 HTML 报告
+# 产物落在宿主机 output/: report.html + runs.db + runs.jsonl
 ```
 
 ## 模块

@@ -4,3 +4,7 @@ output/
 .idea/
 *.iml
 .vscode/
+
+output/runs.db
+output/runs.jsonl
+output/report.html
