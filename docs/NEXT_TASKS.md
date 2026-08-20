@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **v0.1.0 状态速览（2026-08）**：P0 全部完成；P1-1/2/3/4/5/6 完成（SQLite 存储含全量 Trace 持久化与按 run ID 还原）；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎。CI 全链路自动验证。剩余重点：HTTP/CLI Adapter 实战接入真实 LLM（P0-3 增强）、AIOpsLab 接入（P2-2）、Docker Demo、Web 报告（P2-4）。
+> **v0.1.0 状态速览（2026-08）**：P0 全部完成；P1-1/2/3/4/5/6 完成（SQLite 存储含全量 Trace 持久化与按 run ID 还原）；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎。CI 全链路自动验证。**新增：适配器插件化（SPI）+ DSH Trace Adapter 落地（ROADMAP 7.2，含 zstd 多帧解码与真实会话验证，操作手册见 DSH-EVALUATION-GUIDE.md）**。剩余重点：DSH 受控模式实测（消耗配额）、compliance 红线评测器、AIOpsLab 接入（P2-2）、Docker Demo、Web 报告（P2-4）。
 
 ## 优先级定义
 

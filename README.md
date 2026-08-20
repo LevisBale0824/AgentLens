@@ -44,11 +44,14 @@ mvn clean verify        # 构建并运行全部测试（42 个）
 CLI 命令：
 
 ```bash
-# 运行 20 场景数据集，pass^k 聚合 + 稳定性门禁
-AgentLensApp run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden T1,T2]
+# 运行 20 场景数据集，pass^k 聚合 + 稳定性门禁（--adapter 可选 mock/cli/http/dsh）
+AgentLensApp run [--scenarios PATH] [--repeats K] [--adapter NAME] [--allowed T1,T2] [--forbidden T1,T2]
 
 # baseline/candidate 发版对比（核心演示）
 AgentLensApp compare --baseline correct --candidate flaky [--scenarios PATH] [--repeats K]
+
+# 导入已有 DSH session log：zstd 解码 → 统一 Trace → 评测 + 诊断（零成本离线分析）
+AgentLensApp import --session PATH/TO/session.jsonl.zstd [--task ID]
 
 # 按 run ID 还原完整评测（SQLite 持久化：trace 时间线 + 评测结果）
 AgentLensApp show --run RUN_ID
@@ -60,6 +63,36 @@ AgentLensApp report [--db PATH] [--out PATH]
 # 冒烟测试
 AgentLensApp demo
 ```
+
+## 插件化适配器
+
+适配器按"协议家族"划分并通过 Java SPI（`ServiceLoader`）发现——新增适配器只需提供实现
+`AgentAdapter` 接口的 jar 和 `META-INF/services` 注册文件，丢进 classpath 即可，核心平台零改动：
+
+```text
+mock   行为参数化的 Mock Agent（内置默认）
+cli    任意 stdin/stdout 命令行 Agent
+http   OpenAI-compatible HTTP Agent
+dsh    DeepSeek Harness（headless 执行 + session log 轨迹导入）
+```
+
+### 评测 DSH（DeepSeek Harness）
+
+DSH 的 session log 是唯一权威事件源（`session.jsonl.zstd`：拼接式 zstd 多帧容器）。
+`agentlens-adapter-dsh` 把它完整接入统一 Trace：
+
+- **导入模式（零成本）**：`import --session ...` 解码真实 session log，映射 DSH 事件
+  （tool/call、tool/result、assistant/message、turn/step 结构、provider/model 等），
+  直接跑评测器和诊断引擎——已在真实会话（305 事件 / 108 次工具调用）上验证。
+- **受控模式（pass^k）**：场景声明 `"adapter": "dsh"` + `instruction`，适配器以
+  `dsh --profile headless` 执行任务并回收轨迹，见 `data/scenarios/dsh-scenarios.json`。
+- **实时模式（--live）**：`run --adapter dsh --live [--abort-on-violation]` 边跑边看——
+  session log 增量 tail → 流式统一 Trace → 在线判定（forbidden tool / 步数超限 /
+  循环调用），零容忍违规可即刻终止 dsh 进程止损。
+
+完整操作步骤（含场景编写规范、成本控制、排障、事件映射表）见
+[docs/DSH-EVALUATION-GUIDE.md](docs/DSH-EVALUATION-GUIDE.md)。
+
 
 Docker 一键演示（V1 验收项）：
 
@@ -73,10 +106,11 @@ docker compose up --build
 ## 模块
 
 ```text
-agentlens-core       领域模型和核心接口（Task、Event、Run、Trace 校验）
-agentlens-adapters   HTTP、CLI、Mock 等 Agent 适配器
-agentlens-eval       确定性评测器、pass^k 聚合、诊断引擎、回归门禁
-agentlens-cli        命令行入口（run / compare / demo）
+agentlens-core         领域模型和核心接口（Task、Event、Run、Trace 校验、SPI 适配器注册）
+agentlens-adapters     mock / cli / http 通用 Agent 适配器
+agentlens-adapter-dsh  DeepSeek Harness 适配器（headless 执行 + session log 导入）
+agentlens-eval         确定性评测器、pass^k 聚合、诊断引擎、回归门禁
+agentlens-cli          命令行入口（run / compare / import / show / report / demo）
 ```
 
 ## 评测体系

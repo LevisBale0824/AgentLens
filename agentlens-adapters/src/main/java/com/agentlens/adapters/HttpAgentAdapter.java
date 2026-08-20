@@ -17,6 +17,11 @@ public final class HttpAgentAdapter implements AgentAdapter {
     private final URI endpoint;
     private final Duration timeout;
 
+    /** SPI no-arg constructor: endpoint comes from AGENTLENS_HTTP_ENDPOINT (default localhost:8080). */
+    public HttpAgentAdapter() {
+        this(URI.create(System.getenv().getOrDefault("AGENTLENS_HTTP_ENDPOINT", "http://localhost:8080/agent")), null);
+    }
+
     public HttpAgentAdapter(URI endpoint, Duration timeout) {
         this.endpoint = endpoint;
         this.timeout = timeout == null ? Duration.ofSeconds(60) : timeout;

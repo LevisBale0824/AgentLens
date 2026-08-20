@@ -7,7 +7,8 @@ import java.util.List;
 
 public record Scenario(String id, String domain, String alert, List<String> symptoms, String rootCause,
                        List<String> allowedTools, List<String> forbiddenTools,
-                       List<String> successAssertions, int maxSteps, String agentBehavior) {
+                       List<String> successAssertions, int maxSteps, String agentBehavior,
+                       String adapter, String workdir, String instruction) {
 
     @JsonCreator
     public Scenario(@JsonProperty("id") String id,
@@ -19,7 +20,10 @@ public record Scenario(String id, String domain, String alert, List<String> symp
                     @JsonProperty("forbidden_tools") List<String> forbiddenTools,
                     @JsonProperty("success_assertions") List<String> successAssertions,
                     @JsonProperty("max_steps") int maxSteps,
-                    @JsonProperty("agent_behavior") String agentBehavior) {
+                    @JsonProperty("agent_behavior") String agentBehavior,
+                    @JsonProperty("adapter") String adapter,
+                    @JsonProperty("workdir") String workdir,
+                    @JsonProperty("instruction") String instruction) {
         this.id = id;
         this.domain = domain;
         this.alert = alert;
@@ -30,17 +34,27 @@ public record Scenario(String id, String domain, String alert, List<String> symp
         this.successAssertions = successAssertions == null ? List.of() : List.copyOf(successAssertions);
         this.maxSteps = maxSteps;
         this.agentBehavior = agentBehavior == null ? "correct" : agentBehavior;
+        this.adapter = adapter == null || adapter.isBlank() ? "mock" : adapter;
+        this.workdir = workdir;
+        this.instruction = instruction;
     }
 
     /** Converts this scenario into a runnable AgentTask; behavior rides in context. */
     public com.agentlens.core.AgentTask toTask() {
         var context = new java.util.HashMap<String, Object>();
-        context.put("alert", alert);
+        // Map.copyOf rejects null values: only carry fields the scenario actually defines.
+        if (alert != null) context.put("alert", alert);
         context.put("symptoms", symptoms);
-        context.put("rootCause", rootCause);
+        if (rootCause != null) context.put("rootCause", rootCause);
         context.put("allowedTools", allowedTools);
         context.put("forbiddenTools", forbiddenTools);
         context.put("agentBehavior", agentBehavior);
-        return new com.agentlens.core.AgentTask(id, "Diagnose alert " + alert, context, maxSteps);
+        if (workdir != null) context.put("workdir", workdir);
+        return new com.agentlens.core.AgentTask(id, buildInstruction(), context, maxSteps);
+    }
+
+    /** Real-agent scenarios carry the full task in "instruction"; ops scenarios derive it from the alert. */
+    private String buildInstruction() {
+        return instruction != null && !instruction.isBlank() ? instruction : "Diagnose alert " + alert;
     }
 }

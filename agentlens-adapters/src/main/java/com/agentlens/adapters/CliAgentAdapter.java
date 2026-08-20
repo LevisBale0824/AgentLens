@@ -14,6 +14,11 @@ public final class CliAgentAdapter implements AgentAdapter {
     private final List<String> command;
     private final Duration timeout;
 
+    /** SPI no-arg constructor: command comes from AGENTLENS_CLI_COMMAND (default "echo"). */
+    public CliAgentAdapter() {
+        this(List.of(System.getenv().getOrDefault("AGENTLENS_CLI_COMMAND", "echo")), null);
+    }
+
     public CliAgentAdapter(List<String> command, Duration timeout) {
         if (command == null || command.isEmpty()) throw new IllegalArgumentException("command is required");
         this.command = List.copyOf(command);

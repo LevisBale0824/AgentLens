@@ -313,6 +313,46 @@ AgentLens 的差异化定位决定了 pass^k 必要：卖点是"Agent 行为可�
 - ✅ `RegressionGate` 规则扩展：pass^k 下降幅度阈值（可配置）+ requireStable 发版检查。
 - ✅ `--repeats k` CLI 参数（run / compare 子命令）。
 
+### 7.2 V1.1：插件化适配器与 DSH 接入（已完成）
+
+**插件化（SPI）**：`AgentAdapter` 改为 Java `ServiceLoader` 发现，CLI 按场景 `adapter` 字段或
+`--adapter` 参数路由。新增适配器 = 新模块 jar + `META-INF/services` 注册，核心平台零改动，
+不再需要重打包 CLI。
+
+**DSH Trace Adapter**（`agentlens-adapter-dsh`）——首个真实 Agent 接入，补上 Day 13
+"公开 Benchmark 实战接入"的欠账：
+
+- **格式攻坚**：DSH session log 是拼接式 zstd 多帧容器（非普通 JSONL）。帧结构扫描算法
+  从 DSH 源码（`scanZstdFrames`）移植到 Java，逐帧解码，容忍尾部撕裂帧。
+- **事件映射**（经真实会话验证：305 事件 / 108 次工具调用 / 9 轮对话）：
+  `tool/call|tool/result` → TOOL_CALL/TOOL_RESULT（callId 关联）；
+  `assistant/message` → MODEL_CALL + 最终回答；`session`/`request/context` → 运行元数据
+  （cwd、provider、model）。
+- **两种评测模式**：
+  - 导入（零成本）：`import --session PATH` 对已有 session log 离线跑评测 + 诊断；
+  - 受控（pass^k）：场景声明 `adapter: dsh` + `instruction`，适配器以
+    `dsh --profile headless` 执行并回收轨迹（`data/scenarios/dsh-scenarios.json`，5 场景）。
+- **场景模型扩展**：`Scenario` 新增 `adapter` / `workdir` / `instruction` 字段，
+  `agent_behavior: external` 表示真实 Agent（无预设脚本行为）。
+
+**待办**：受控模式端到端实测（消耗 LLM 配额，择机执行）；compliance 红线评测器
+（借鉴 AgentLoop 文章的 hard/soft/light 分级）；DSH 版 baseline/candidate compare；
+诊断引擎重复调用检测需结合 callId 区分并行调用与真重试。
+
+**实时评测（v0.2.0 已落地）**：
+
+- ✅ `DshSessionLogWatcher`：session log 增量 tail——文件增长轮询 + 重扫 zstd 帧 +
+  只解新帧 + 部分行缓冲；撕裂帧自动跳过、补全后消费（8 个测试含竞态场景）。
+- ✅ `LiveEvaluator`（core 模块）：在线判定——forbidden tool（硬违规）/ 步数超限 /
+  连续重复调用（滑动窗口，并行交替不误报），每条 verdict 携带事件索引。
+- ✅ `DshAgentAdapter.run(task, live)`：实时模式——事件流回调 + `shouldAbort` 触发
+  即刻 `destroyForcibly`，中止 run 标记 CANCELLED 并记录原因；结束后仍读完整日志
+  保证终态判定。
+- ✅ CLI `--live` / `--abort-on-violation`：流式 Trace 展示 + 在线 verdict 输出。
+
+操作手册：[DSH-EVALUATION-GUIDE.md](DSH-EVALUATION-GUIDE.md)（三种模式、场景规范、
+成本提示、排障、事件映射表）。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

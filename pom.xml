@@ -20,6 +20,7 @@
     <modules>
         <module>agentlens-core</module>
         <module>agentlens-adapters</module>
+        <module>agentlens-adapter-dsh</module>
         <module>agentlens-eval</module>
         <module>agentlens-cli</module>
     </modules>

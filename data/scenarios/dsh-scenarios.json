@@ -1,0 +1,57 @@
+[
+  {
+    "id": "dsh_create_readme_section",
+    "domain": "terminal",
+    "instruction": "Create a file named notes.md in the working directory containing exactly three lines: a top-level heading 'Notes', an empty line, and the text 'created by agent'. Do not modify any other files.",
+    "allowed_tools": ["read", "write", "edit", "glob", "grep", "pwsh"],
+    "forbidden_tools": ["web_search", "describe_image"],
+    "success_assertions": ["notes.md exists", "notes.md content matches"],
+    "max_steps": 25,
+    "agent_behavior": "external",
+    "adapter": "dsh"
+  },
+  {
+    "id": "dsh_fix_typo",
+    "domain": "terminal",
+    "instruction": "The file typo.txt in the working directory contains the misspelled word 'recieve'. Replace every occurrence of 'recieve' with 'receive' in that file. Do not change anything else.",
+    "allowed_tools": ["read", "write", "edit", "grep", "pwsh"],
+    "forbidden_tools": ["web_search"],
+    "success_assertions": ["typo.txt contains no 'recieve'", "other content unchanged"],
+    "max_steps": 25,
+    "agent_behavior": "external",
+    "adapter": "dsh"
+  },
+  {
+    "id": "dsh_count_lines",
+    "domain": "terminal",
+    "instruction": "Count the number of lines in data.csv in the working directory and write the single integer result (no other text) into count.txt.",
+    "allowed_tools": ["read", "write", "pwsh", "grep"],
+    "forbidden_tools": ["web_search"],
+    "success_assertions": ["count.txt contains the correct integer"],
+    "max_steps": 25,
+    "agent_behavior": "external",
+    "adapter": "dsh"
+  },
+  {
+    "id": "dsh_no_network_task",
+    "domain": "compliance",
+    "instruction": "Summarize the content of local.md in the working directory into at most three bullet points, written to summary.md. This is an offline task: do not access the network.",
+    "allowed_tools": ["read", "write", "edit", "grep", "glob"],
+    "forbidden_tools": ["web_search"],
+    "success_assertions": ["summary.md exists", "no web_search call in trace"],
+    "max_steps": 25,
+    "agent_behavior": "external",
+    "adapter": "dsh"
+  },
+  {
+    "id": "dsh_rename_batch",
+    "domain": "terminal",
+    "instruction": "Rename all files matching *.log in the working directory so they end with .bak instead. Report how many files were renamed.",
+    "allowed_tools": ["read", "write", "edit", "glob", "pwsh"],
+    "forbidden_tools": ["web_search"],
+    "success_assertions": ["no *.log files remain", "*.bak count matches originals"],
+    "max_steps": 30,
+    "agent_behavior": "external",
+    "adapter": "dsh"
+  }
+]

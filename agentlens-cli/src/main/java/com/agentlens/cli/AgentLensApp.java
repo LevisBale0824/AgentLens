@@ -349,11 +349,16 @@ public final class AgentLensApp {
 
     private static Map<String, String> parseOptions(String[] args, String command) {
         Map<String, String> opts = new java.util.HashMap<>();
-        int start = "run".equals(command) || "demo".equals(command) || "compare".equals(command)
-                || "show".equals(command) || "report".equals(command) || "import".equals(command)
-                ? 1 : 0;
-        for (int i = start; i < args.length - 1; i++)
-            if (args[i].startsWith("--")) opts.put(args[i].substring(2), args[i + 1]);
+        // Skip the command word (args[0]) only when it is one, not when it is a flag.
+        int start = args.length > 0 && !args[0].startsWith("--")
+                && List.of("run", "demo", "compare", "show", "report", "import").contains(args[0]) ? 1 : 0;
+        for (int i = start; i < args.length; i++) {
+            if (!args[i].startsWith("--")) continue;
+            String key = args[i].substring(2);
+            // Boolean flag: no value token, or the next token is another flag.
+            if (i + 1 >= args.length || args[i + 1].startsWith("--")) opts.put(key, "true");
+            else opts.put(key, args[++i]);
+        }
         return opts;
     }
 

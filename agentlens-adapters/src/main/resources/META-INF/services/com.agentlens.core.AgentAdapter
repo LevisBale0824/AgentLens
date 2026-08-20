@@ -1,0 +1,3 @@
+com.agentlens.adapters.MockAgentAdapter
+com.agentlens.adapters.CliAgentAdapter
+com.agentlens.adapters.HttpAgentAdapter

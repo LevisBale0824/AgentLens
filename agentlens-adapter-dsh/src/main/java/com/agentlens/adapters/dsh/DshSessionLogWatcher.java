@@ -107,9 +107,9 @@ public final class DshSessionLogWatcher implements AutoCloseable {
                 java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN));
         for (int i = consumedFrames; i < frames.size(); i++) {
             int[] range = frames.get(i);
-            String chunk = new String(java.util.Arrays.copyOfRange(bytes, range[0], range[1]),
-                    java.nio.charset.StandardCharsets.UTF_8);
-            emitLines(chunk);
+            byte[] compressed = java.util.Arrays.copyOfRange(bytes, range[0], range[1]);
+            emitLines(new String(DshSessionLogReader.decompressFrame(compressed),
+                    java.nio.charset.StandardCharsets.UTF_8));
             consumedFrames = i + 1;
             consumedBytes = range[1];
         }

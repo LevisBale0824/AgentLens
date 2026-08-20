@@ -45,6 +45,21 @@ class ScenarioLoaderTest {
         assertEquals("correct", scenarios.get(0).agentBehavior());
     }
 
+    @Test
+    void externalScenarioWithoutAlertConvertsToTask() throws Exception {
+        // Regression: real-agent scenarios (dsh) have no alert/root_cause; toTask used to
+        // put null values into the context, and AgentTask's Map.copyOf then threw NPE.
+        var loader = new ScenarioLoader();
+        String json = "[{\"id\":\"ext\",\"domain\":\"terminal\",\"instruction\":\"do it\","
+                + "\"allowed_tools\":[\"read\"],\"forbidden_tools\":[],\"success_assertions\":[\"x\"],"
+                + "\"max_steps\":5,\"agent_behavior\":\"external\",\"adapter\":\"dsh\","
+                + "\"workdir\":\"D:/tmp/x\"}]";
+        var task = loader.load(writeTemp(json)).get(0).toTask();
+        assertEquals("do it", task.instruction());
+        assertEquals("D:/tmp/x", task.context().get("workdir"));
+        assertFalse(task.context().containsKey("alert"));
+    }
+
     private static String scenarioJson(String id) {
         return "{\"id\":\"" + id + "\",\"domain\":\"test\",\"alert\":\"A\",\"symptoms\":[\"s\"],"
                 + "\"root_cause\":\"r\",\"allowed_tools\":[\"t\"],\"forbidden_tools\":[\"f\"],"

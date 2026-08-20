@@ -1,0 +1,14 @@
+[
+  {
+    "id": "dsh_create_readme_section",
+    "domain": "terminal",
+    "instruction": "Create a file named notes.md in the working directory containing exactly three lines: a top-level heading 'Notes', an empty line, and the text 'created by agent'. Do not modify any other files.",
+    "allowed_tools": ["read", "write", "edit", "glob", "grep", "pwsh"],
+    "forbidden_tools": ["web_search", "describe_image"],
+    "success_assertions": ["notes.md exists", "notes.md content matches"],
+    "max_steps": 25,
+    "agent_behavior": "external",
+    "adapter": "dsh",
+    "workdir": "D:/tmp/dsh-eval/task1"
+  }
+]
