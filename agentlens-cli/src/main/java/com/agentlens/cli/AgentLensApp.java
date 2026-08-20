@@ -4,6 +4,7 @@ import com.agentlens.core.AgentAdapter;
 import com.agentlens.core.AgentRun;
 import com.agentlens.core.AgentTask;
 import com.agentlens.core.AdapterRegistry;
+import com.agentlens.eval.ComplianceEvaluator;
 import com.agentlens.eval.EvaluatorRegistry;
 import com.agentlens.eval.ExperimentRunner;
 import com.agentlens.eval.PassK;
@@ -115,7 +116,8 @@ public final class AgentLensApp {
         var registry = new EvaluatorRegistry()
                 .register(new TaskCompletionEvaluator())
                 .register(new RunLimitEvaluator())
-                .register(new ToolPolicyEvaluator(Set.of(), Set.of()));
+                .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
+                .register(new ComplianceEvaluator());
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
 
         for (int repeat = 1; repeat <= repeats; repeat++) {
@@ -236,7 +238,8 @@ public final class AgentLensApp {
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
-                        .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden)),
+                        .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden))
+                        .register(new ComplianceEvaluator()),
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
                 opts.getOrDefault("db", DEFAULT_DB));
 
@@ -299,7 +302,8 @@ public final class AgentLensApp {
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
-                        .register(new ToolPolicyEvaluator(Set.of(), Set.of())),
+                        .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
+                        .register(new ComplianceEvaluator()),
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
                 DEFAULT_DB);
         var byTask = runner.runRepeated(tasks, repeats);

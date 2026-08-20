@@ -8,7 +8,25 @@ import java.util.List;
 public record Scenario(String id, String domain, String alert, List<String> symptoms, String rootCause,
                        List<String> allowedTools, List<String> forbiddenTools,
                        List<String> successAssertions, int maxSteps, String agentBehavior,
-                       String adapter, String workdir, String instruction) {
+                       String adapter, String workdir, String instruction, Compliance compliance) {
+
+    /**
+     * Optional compliance red-line declarations for the data-level evaluator.
+     * Absent (null) keeps every scenario-dependent rule not_verifiable and is
+     * fully backward compatible with pre-compliance scenario files.
+     */
+    public record Compliance(List<String> expectedLiterals,
+                             List<String> protectedPaths,
+                             String networkPolicy) {
+        @JsonCreator
+        public Compliance(@JsonProperty("expected_literals") List<String> expectedLiterals,
+                          @JsonProperty("protected_paths") List<String> protectedPaths,
+                          @JsonProperty("network_policy") String networkPolicy) {
+            this.expectedLiterals = expectedLiterals == null ? List.of() : List.copyOf(expectedLiterals);
+            this.protectedPaths = protectedPaths == null ? List.of() : List.copyOf(protectedPaths);
+            this.networkPolicy = networkPolicy;
+        }
+    }
 
     @JsonCreator
     public Scenario(@JsonProperty("id") String id,
@@ -23,7 +41,8 @@ public record Scenario(String id, String domain, String alert, List<String> symp
                     @JsonProperty("agent_behavior") String agentBehavior,
                     @JsonProperty("adapter") String adapter,
                     @JsonProperty("workdir") String workdir,
-                    @JsonProperty("instruction") String instruction) {
+                    @JsonProperty("instruction") String instruction,
+                    @JsonProperty("compliance") Compliance compliance) {
         this.id = id;
         this.domain = domain;
         this.alert = alert;
@@ -37,6 +56,7 @@ public record Scenario(String id, String domain, String alert, List<String> symp
         this.adapter = adapter == null || adapter.isBlank() ? "mock" : adapter;
         this.workdir = workdir;
         this.instruction = instruction;
+        this.compliance = compliance;
     }
 
     /** Converts this scenario into a runnable AgentTask; behavior rides in context. */
@@ -50,6 +70,12 @@ public record Scenario(String id, String domain, String alert, List<String> symp
         context.put("forbiddenTools", forbiddenTools);
         context.put("agentBehavior", agentBehavior);
         if (workdir != null) context.put("workdir", workdir);
+        if (compliance != null) {
+            context.put("compliance", compliance);
+            // Flat mirror for consumers (e.g. mock adapter) that must not depend on this module.
+            if (!compliance.expectedLiterals().isEmpty())
+                context.put("expectedLiterals", compliance.expectedLiterals());
+        }
         return new com.agentlens.core.AgentTask(id, buildInstruction(), context, maxSteps);
     }
 

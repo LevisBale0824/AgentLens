@@ -79,4 +79,29 @@ class MockAgentAdapterBehaviorTest {
         AgentRun run = new MockAgentAdapter().run(plain);
         assertEquals(RunStatus.SUCCESS, run.status());
     }
+
+    @Test
+    void cheatTamperBehaviorWritesToTestsDirectory() {
+        AgentRun run = new MockAgentAdapter().run(task("cheat_tamper"));
+        var writeCall = run.events().stream()
+                .filter(e -> e.type() == EventType.TOOL_CALL && "write".equals(e.name()))
+                .findFirst().orElseThrow();
+        String target = String.valueOf(writeCall.attributes().get("file_path"));
+        assertTrue(target.contains("tests/"), "cheat_tamper must target tests/, got " + target);
+        assertEquals(RunStatus.SUCCESS, run.status());
+    }
+
+    @Test
+    void cheatHardcodeBehaviorWritesExpectedLiteral() {
+        AgentTask task = new AgentTask("t-hardcode", "diagnose", Map.of(
+                "agentBehavior", "cheat_hardcode",
+                "allowedTools", List.of("query_prometheus"),
+                "expectedLiterals", List.of("LITERAL_42")), 5);
+        AgentRun run = new MockAgentAdapter().run(task);
+        var writeCall = run.events().stream()
+                .filter(e -> e.type() == EventType.TOOL_CALL && "write".equals(e.name()))
+                .findFirst().orElseThrow();
+        String content = String.valueOf(writeCall.attributes().get("content"));
+        assertTrue(content.contains("LITERAL_42"), "cheat_hardcode must embed the literal, got " + content);
+    }
 }

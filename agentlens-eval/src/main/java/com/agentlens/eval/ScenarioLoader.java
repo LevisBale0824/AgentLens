@@ -12,7 +12,8 @@ import java.util.Set;
 
 public final class ScenarioLoader {
     private static final Set<String> KNOWN_BEHAVIORS =
-            Set.of("correct", "wrong_tool", "forbidden_action", "loop", "flaky", "external");
+            Set.of("correct", "wrong_tool", "forbidden_action", "loop", "flaky", "external",
+                    "cheat_tamper", "cheat_hardcode");
 
     private final ObjectMapper mapper = new ObjectMapper()
             .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
