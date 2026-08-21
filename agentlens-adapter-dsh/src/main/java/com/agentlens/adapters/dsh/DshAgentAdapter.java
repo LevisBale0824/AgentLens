@@ -140,7 +140,7 @@ public final class DshAgentAdapter implements AgentAdapter {
         long deadline = System.currentTimeMillis() + 30_000;
         while (System.currentTimeMillis() < deadline) {
             try {
-                var found = findSessionLog(dshHome(task.context()), startMillis);
+                var found = findSessionLog(dshHome(task.context()), startMillis, workdirOf(task));
                 if (found.isPresent()) { log = found.get(); break; }
             } catch (IOException ignored) {}
             Thread.sleep(500);
@@ -176,7 +176,7 @@ public final class DshAgentAdapter implements AgentAdapter {
                               LiveSession liveSession, RunStatus forcedStatus, String forcedError)
             throws IOException {
         try (var ignored = liveSession == null ? null : liveSession.watcher()) {
-            Path sessionLog = findSessionLog(dshHome(task.context()), startMillis).orElse(null);
+            Path sessionLog = findSessionLog(dshHome(task.context()), startMillis, workdirOf(task)).orElse(null);
             if (sessionLog != null) {
                 DshTraceMapper.Mapped mapped = DshTraceMapper.toRun(
                         DshSessionLogReader.read(sessionLog), task.id());
@@ -207,10 +207,23 @@ public final class DshAgentAdapter implements AgentAdapter {
                 : Path.of(System.getProperty("user.home"), ".dsh");
     }
 
-    /** Finds the newest session log written after {@code notBefore}, verifying cwd lazily. */
-    static java.util.Optional<Path> findSessionLog(Path dshHome, long notBefore) throws IOException {
+    /** Scenario workdir (session cwd), defaulting to the process cwd like {@link #run}. */
+    static Path workdirOf(AgentTask task) {
+        return Path.of(str(task.context().get("workdir"), System.getProperty("user.dir")));
+    }
+
+    /**
+     * Finds the newest session log written after {@code notBefore}. When {@code workdir}
+     * is known, only session directories whose DSH-encoded cwd matches the workdir are
+     * considered: DSH names each session directory after the session cwd (path with
+     * non-alphanumerics replaced by dashes, e.g. {@code D:\tmp\x} -> {@code --D-tmp-x--}),
+     * so filtering on that token prevents latching onto an unrelated concurrently-active
+     * session (e.g. the interactive GUI session running the evaluation itself).
+     */
+    static java.util.Optional<Path> findSessionLog(Path dshHome, long notBefore, Path workdir) throws IOException {
         Path sessions = dshHome.resolve("sessions");
         if (!Files.isDirectory(sessions)) return java.util.Optional.empty();
+        String token = dirToken(workdir);
         try (Stream<Path> files = Files.walk(sessions, 3)) {
             return files.filter(Files::isRegularFile)
                     .filter(p -> {
@@ -218,8 +231,33 @@ public final class DshAgentAdapter implements AgentAdapter {
                         return n.equals("session.jsonl") || n.equals("session.jsonl.zstd");
                     })
                     .filter(p -> lastModifiedMs(p) >= notBefore)
+                    .filter(p -> token == null || underCwdDirectory(p, sessions, token))
                     .max(Comparator.comparingLong(DshAgentAdapter::lastModifiedMs));
         }
+    }
+
+    /** True if some directory between the log file and {@code sessionsRoot} encodes the cwd token. */
+    static boolean underCwdDirectory(Path log, Path sessionsRoot, String token) {
+        for (Path dir = log.getParent(); dir != null && dir.startsWith(sessionsRoot); dir = dir.getParent()) {
+            if (dir.getFileName() != null && normalizeDashes(dir.getFileName().toString()).contains(token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * DSH session-directory token for a cwd: non-alphanumerics become dashes and runs of
+     * dashes collapse to one (DSH encodes {@code D:\tmp\x} as {@code --D-tmp-x--}, so both
+     * sides must be collapsed before comparing). Leading/trailing dashes are trimmed.
+     */
+    static String dirToken(Path workdir) {
+        if (workdir == null) return null;
+        return normalizeDashes(workdir.toString());
+    }
+
+    private static String normalizeDashes(String s) {
+        return s.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
     }
 
     private static long lastModifiedMs(Path p) {
