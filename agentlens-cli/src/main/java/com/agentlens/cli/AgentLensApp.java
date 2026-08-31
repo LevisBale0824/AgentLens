@@ -16,6 +16,7 @@ import com.agentlens.eval.TaskCompletionEvaluator;
 import com.agentlens.eval.ToolPolicyEvaluator;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -106,6 +107,8 @@ public final class AgentLensApp {
     /**
      * Live mode: runs each scenario with streaming trace display and online verdicts;
      * with --abort-on-violation, hard violations kill the dsh process immediately.
+     * Persists every run + evaluation to SQLite (same as the batch path) and prints
+     * the same pass^k summary + release gate, so live/batch outputs stay comparable.
      */
     private static void dshLiveRun(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
                                    List<Scenario> scenarios, Map<String, String> opts) throws Exception {
@@ -119,40 +122,57 @@ public final class AgentLensApp {
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                 .register(new ComplianceEvaluator());
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
+        Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
 
-        for (int repeat = 1; repeat <= repeats; repeat++) {
-            for (Scenario scenario : scenarios) {
-                var task = scenario.toTask();
-                System.out.printf("%n[%s] repeat %d/%d: %s%n", java.time.LocalTime.now(), repeat, repeats, task.id());
-                var live = new com.agentlens.adapters.dsh.DshAgentAdapter.LiveListener() {
-                    @Override public void onTraceEvent(com.agentlens.core.AgentEvent e, int i) {
-                        System.out.printf("  [%s] %-13s %-20s %s%n", java.time.LocalTime.now().withNano(0),
-                                e.type(), e.name(),
-                                e.attributes().isEmpty() ? "" : String.valueOf(e.attributes()).substring(0,
-                                        Math.min(100, String.valueOf(e.attributes()).length())));
+        try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
+            for (int repeat = 1; repeat <= repeats; repeat++) {
+                for (Scenario scenario : scenarios) {
+                    var task = scenario.toTask();
+                    System.out.printf("%n[%s] repeat %d/%d: %s%n", java.time.LocalTime.now(), repeat, repeats, task.id());
+                    var live = new com.agentlens.adapters.dsh.DshAgentAdapter.LiveListener() {
+                        @Override public void onTraceEvent(com.agentlens.core.AgentEvent e, int i) {
+                            System.out.printf("  [%s] %-13s %-20s %s%n", java.time.LocalTime.now().withNano(0),
+                                    e.type(), e.name(),
+                                    e.attributes().isEmpty() ? "" : String.valueOf(e.attributes()).substring(0,
+                                            Math.min(100, String.valueOf(e.attributes()).length())));
+                        }
+                        @Override public void onVerdict(com.agentlens.core.LiveEvaluator.Verdict v) {
+                            System.out.printf("  !! %-10s %-15s %s%n", v.layer(), v.rule(), v.message());
+                        }
+                        @Override public boolean shouldAbort(com.agentlens.core.LiveEvaluator.Verdict v) {
+                            return abort;
+                        }
+                    };
+                    AgentRun run = dsh.run(task, live);
+                    boolean hardFail = run.status() != com.agentlens.core.RunStatus.SUCCESS;
+                    if (run.status() == com.agentlens.core.RunStatus.CANCELLED) aborted++;
+                    else if (hardFail) failed++;
+                    var results = registry.evaluate(task, run);
+                    var diagnoses = diagnosis.diagnose(task, run, results);
+                    System.out.printf("  => status=%s duration=%dms events=%d diagnoses=%d%n",
+                            run.status(), run.durationMs(), run.events().size(), diagnoses.size());
+                    if (!run.events().isEmpty() && results.stream().noneMatch(r -> r.passed())) failed++;
+                    else if (!hardFail) passed++;
+
+                    try {
+                        sqlite.saveRun(run, dsh.name());
+                        sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), task.id(),
+                                dsh.name(), "dev", run.startedAt(), results,
+                                Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens())));
+                    } catch (Exception e) {
+                        throw new IllegalStateException("sqlite persistence failed for " + run.runId(), e);
                     }
-                    @Override public void onVerdict(com.agentlens.core.LiveEvaluator.Verdict v) {
-                        System.out.printf("  !! %-10s %-15s %s%n", v.layer(), v.rule(), v.message());
-                    }
-                    @Override public boolean shouldAbort(com.agentlens.core.LiveEvaluator.Verdict v) {
-                        return abort;
-                    }
-                };
-                AgentRun run = dsh.run(task, live);
-                boolean hardFail = run.status() != com.agentlens.core.RunStatus.SUCCESS;
-                if (run.status() == com.agentlens.core.RunStatus.CANCELLED) aborted++;
-                else if (hardFail) failed++;
-                var results = registry.evaluate(task, run);
-                var diagnoses = diagnosis.diagnose(task, run, results);
-                System.out.printf("  => status=%s duration=%dms events=%d diagnoses=%d%n",
-                        run.status(), run.durationMs(), run.events().size(), diagnoses.size());
-                if (!run.events().isEmpty() && results.stream().noneMatch(r -> r.passed())) failed++;
-                else if (!hardFail) passed++;
+                    byTask.computeIfAbsent(task.id(), t -> new ArrayList<>()).add(results);
+                }
             }
         }
         System.out.printf("%nlive run: scenarios=%d repeats=%d passed=%d failed=%d aborted=%d%n",
                 scenarios.size(), repeats, passed, failed, aborted);
-        if (failed > 0 || aborted > 0) System.exit(1);
+        var summary = PassK.summarize(byTask);
+        printPassKSummary(summary);
+        var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(summary);
+        System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
+        if (!gate.passed() || failed > 0 || aborted > 0) System.exit(1);
     }
 
     /** Restores and prints a full run (trace timeline + evaluation) by run id. */
@@ -252,16 +272,9 @@ public final class AgentLensApp {
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = repeats > 1
                 ? runner.runRepeated(tasks, repeats)
                 : singleRunAsRepeated(batch);
-        var summary = PassK.summarize(byTask);
-        System.out.printf("%npass^k summary: scenarios=%d, pass^k=%.3f, avgPassRate=%.3f%n",
-                summary.scenarios(), summary.passPowK(), summary.avgPassRate());
-        for (var layer : List.of(PassK.FailureLayer.STABLE_PASS,
-                PassK.FailureLayer.FLAKY, PassK.FailureLayer.STABLE_FAIL)) {
-            List<String> ids = summary.layered().getOrDefault(layer, List.of());
-            if (!ids.isEmpty()) System.out.printf("  %-12s %d %s%n", layer, ids.size(), ids);
-        }
+        printPassKSummary(PassK.summarize(byTask));
 
-        var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(summary);
+        var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(PassK.summarize(byTask));
         System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
         if (!gate.passed()) System.exit(1);
     }
@@ -319,6 +332,17 @@ public final class AgentLensApp {
         }
     }
 
+    /** Shared pass^k summary + layered failure view (batch run and live run print the same shape). */
+    private static void printPassKSummary(PassK.Summary summary) {
+        System.out.printf("%npass^k summary: scenarios=%d, pass^k=%.3f, avgPassRate=%.3f%n",
+                summary.scenarios(), summary.passPowK(), summary.avgPassRate());
+        for (var layer : List.of(PassK.FailureLayer.STABLE_PASS,
+                PassK.FailureLayer.FLAKY, PassK.FailureLayer.STABLE_FAIL)) {
+            List<String> ids = summary.layered().getOrDefault(layer, List.of());
+            if (!ids.isEmpty()) System.out.printf("  %-12s %d %s%n", layer, ids.size(), ids);
+        }
+    }
+
     /** Original single-task demo, kept for smoke testing. */
     private static void demo(Map<String, String> opts) throws Exception {
         AgentTask task = new AgentTask("demo-001", "inspect the service health", Map.of(), 10);
@@ -351,7 +375,8 @@ public final class AgentLensApp {
         return byTask;
     }
 
-    private static Map<String, String> parseOptions(String[] args, String command) {
+    /** Package-private for unit tests (ParseOptionsTest). */
+    static Map<String, String> parseOptions(String[] args, String command) {
         Map<String, String> opts = new java.util.HashMap<>();
         // Skip the command word (args[0]) only when it is one, not when it is a flag.
         int start = args.length > 0 && !args[0].startsWith("--")

@@ -4,6 +4,7 @@ output/
 .idea/
 *.iml
 .vscode/
+.models/
 
 output/runs.db
 output/runs.jsonl

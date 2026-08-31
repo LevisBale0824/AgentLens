@@ -18,6 +18,12 @@
 mvn clean verify          # 构建，确认全绿
 ```
 
+> **重要**：用 `mvn exec:java -pl agentlens-cli` 运行 CLI 之前，必须先执行
+> `mvn -DskipTests install`（或 `mvn install`）。`-pl` 单模块构建会从本地仓库
+> `~/.m2` 解析兄弟模块（agentlens-core/eval/adapter-dsh）的 jar——`clean verify`
+> 不执行 install，exec 会加载修复前的旧版 jar，表现为"代码修了却不生效"。
+> 详见 docs/reports/dsh-live-e2e.md 问题 3。
+
 ## 快速开始（三条命令）
 
 以下命令均在仓库根目录执行；`"-Dexec.args=..."` 里就是 CLI 的原始参数，
@@ -169,7 +175,8 @@ candidate = DSH + 模型 B
 
 ### 1. 命令
 
-在仓库根目录（D:\code\AgentLens）用 Maven exec 运行（首次运行前先 `mvn clean verify` 构建）：
+在仓库根目录（D:\code\AgentLens）用 Maven exec 运行（首次运行前先 `mvn -DskipTests install`，
+原因见上方「重要」说明）：
 
 ```powershell
 # 实时展示：流式打印统一 Trace 事件 + 在线判定（不终止进程）
