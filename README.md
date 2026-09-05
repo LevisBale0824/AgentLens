@@ -63,6 +63,10 @@ AgentLensApp report [--db PATH] [--out PATH]
 
 # 冒烟测试
 AgentLensApp demo
+
+# LLM 质量评审（P2-1，可选；本地 Ollama 推荐 --judge-ollama，见 docs/reports/llm-judge-design.md）
+AgentLensApp run --scenarios PATH --judge --judge-ollama
+AgentLensApp import --session PATH/TO/session.jsonl.zstd --judge --judge-ollama
 ```
 
 ## 插件化适配器

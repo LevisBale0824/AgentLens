@@ -383,6 +383,24 @@ not_verifiable，向后兼容；Mock 行为库新增 cheat_tamper / cheat_hardco
 操作手册：[DSH-EVALUATION-GUIDE.md](DSH-EVALUATION-GUIDE.md)（三种模式、场景规范、
 成本提示、排障、事件映射表）。
 
+### 7.3 P2-1:LLM Judge(已落地)
+
+`OpenAiJudge` + `LlmJudgeEvaluator`,CLI `run / import / live / compare(--adapter dsh)` 均可
+`--judge` 接入。要点:
+
+- 四个预设 criteria(ROADMAP 5.3:解释质量/证据充分性/建议质量/计划合理性),合并为一条
+  `llm-judge` 评测结果(passed=AND,score=平均,metadata 按 criterion 存分)。
+- 严格 JSON 判定 + Schema 校验 + 温度递增重试 + 按内容哈希缓存(同轨迹零重付)+
+  judge 模型/prompt 版本恒记录。
+- trace digest 全量消毒(引号/反斜杠/花括号),杜绝模型引用原文时的转义崩溃——
+  小模型 judge 稳定解析的关键(真机复盘)。
+- 传输可选:OpenAI 兼容(`--judge-json-mode`,response_format)或 Ollama 原生
+  `--judge-ollama`(/api/chat + format:json,语法级保证;本机兼容层实测忽略 response_format)。
+- fail-open:judge 基础设施故障不阻塞门禁(按 criterion 记 degraded);judge 正常给出的
+  否定判定如实参与 pass^k 与门禁(真机实证:mock-correct 的空洞回答被判 0.00 而门禁拒绝)。
+
+真机验证与故障复盘详见 `docs/reports/llm-judge-design.md`。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

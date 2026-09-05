@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。CI 全链路自动验证。**剩余重点：LLM Judge（P2-1，目前仅接口）、AIOpsLab 接入（P2-2）、OpenTelemetry 兼容（P2-3）、真 Agent 退化候选演示。**
+> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。CI 全链路自动验证。**剩余重点：AIOpsLab 接入（P2-2）、OpenTelemetry 兼容（P2-3）、DeepEval/Ragas 指标接入、judge 标定。**
 
 ## 优先级定义
 

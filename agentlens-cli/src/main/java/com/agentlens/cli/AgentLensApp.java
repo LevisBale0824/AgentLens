@@ -23,9 +23,9 @@ import java.util.Set;
 
 /**
  * AgentLens CLI. Usage:
- *   run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden T1,T2]
+ *   run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden T1,T2] [--judge]
  *   compare --baseline BEHAVIOR --candidate BEHAVIOR [--scenarios PATH] [--repeats K]
- *           [--adapter dsh]   (both sides = real headless DSH sessions)
+ *           [--adapter dsh]   (both sides = real headless DSH sessions; --judge supported)
  *   demo
  */
 public final class AgentLensApp {
@@ -85,10 +85,11 @@ public final class AgentLensApp {
         var task = new AgentTask(run.taskId(),
                 mapped.instruction() == null ? "imported session" : mapped.instruction(),
                 Map.of(), steps + 10);
-        var results = new EvaluatorRegistry()
+        var registry = new EvaluatorRegistry()
                 .register(new TaskCompletionEvaluator())
-                .register(new RunLimitEvaluator())
-                .evaluate(task, run);
+                .register(new RunLimitEvaluator());
+        if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
+        var results = registry.evaluate(task, run);
         System.out.println("  evaluation:");
         results.forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
                 r.evaluator(), r.passed(), r.reason()));
@@ -122,6 +123,7 @@ public final class AgentLensApp {
                 .register(new RunLimitEvaluator())
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                 .register(new ComplianceEvaluator());
+        if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
 
@@ -255,12 +257,13 @@ public final class AgentLensApp {
         }
 
         List<AgentTask> tasks = scenarios.stream().map(Scenario::toTask).toList();
-        var runner = withSqlite(new ExperimentRunner(adapter,
-                new EvaluatorRegistry()
-                        .register(new TaskCompletionEvaluator())
-                        .register(new RunLimitEvaluator())
-                        .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden))
-                        .register(new ComplianceEvaluator()),
+        var evaluators = new EvaluatorRegistry()
+                .register(new TaskCompletionEvaluator())
+                .register(new RunLimitEvaluator())
+                .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden))
+                .register(new ComplianceEvaluator());
+        if (opts.containsKey("judge")) evaluators.register(judgeEvaluator(opts));
+        var runner = withSqlite(new ExperimentRunner(adapter, evaluators,
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
                 opts.getOrDefault("db", DEFAULT_DB));
 
@@ -348,6 +351,7 @@ public final class AgentLensApp {
                 .register(new RunLimitEvaluator())
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                 .register(new ComplianceEvaluator());
+        if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
@@ -404,6 +408,33 @@ public final class AgentLensApp {
             List<String> ids = summary.layered().getOrDefault(layer, List.of());
             if (!ids.isEmpty()) System.out.printf("  %-12s %d %s%n", layer, ids.size(), ids);
         }
+    }
+
+    /** Builds the LLM judge evaluator from CLI options / environment (ROADMAP P2-1). */
+    private static com.agentlens.eval.LlmJudgeEvaluator judgeEvaluator(Map<String, String> opts) {
+        String url = opts.getOrDefault("judge-url",
+                envOr("AGENTLENS_JUDGE_URL", "http://localhost:11434"));
+        String model = opts.getOrDefault("judge-model",
+                envOr("AGENTLENS_JUDGE_MODEL", "qwen2.5:7b"));
+        String key = opts.containsKey("judge-api-key") ? opts.get("judge-api-key")
+                : System.getenv("AGENTLENS_JUDGE_API_KEY");
+        boolean jsonMode = opts.containsKey("judge-json-mode")
+                || "true".equalsIgnoreCase(System.getenv("AGENTLENS_JUDGE_JSON_MODE"));
+        boolean ollamaNative = opts.containsKey("judge-ollama")
+                || "true".equalsIgnoreCase(System.getenv("AGENTLENS_JUDGE_OLLAMA"));
+        var judge = new com.agentlens.eval.OpenAiJudge(java.net.URI.create(url), model, key,
+                0.0, java.time.Duration.ofSeconds(Integer.parseInt(
+                        opts.getOrDefault("judge-timeout-sec", envOr("AGENTLENS_JUDGE_TIMEOUT_SEC", "120")))),
+                3, jsonMode, ollamaNative);
+        System.out.printf("judge: %s (model=%s, url=%s, jsonMode=%s, ollamaNative=%s, criteria=%s, fail-open)%n",
+                com.agentlens.eval.LlmJudgeEvaluator.EVALUATOR_NAME, model, url, jsonMode, ollamaNative,
+                com.agentlens.eval.LlmJudgeEvaluator.CRITERIA.keySet());
+        return new com.agentlens.eval.LlmJudgeEvaluator(judge);
+    }
+
+    private static String envOr(String key, String fallback) {
+        String v = System.getenv(key);
+        return v == null || v.isBlank() ? fallback : v;
     }
 
     /** Original single-task demo, kept for smoke testing. */
