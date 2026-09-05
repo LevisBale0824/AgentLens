@@ -335,8 +335,16 @@ AgentLens 的差异化定位决定了 pass^k 必要：卖点是"Agent 行为可�
 - **场景模型扩展**：`Scenario` 新增 `adapter` / `workdir` / `instruction` 字段，
   `agent_behavior: external` 表示真实 Agent（无预设脚本行为）。
 
-**待办**：受控模式（非 live 路径）独立实测；DSH 版 baseline/candidate compare（真 Agent
-的 pass^k 对比门禁演示）。
+**受控模式实测 + DSH 版 compare(已落地,真机验证)**:受控(非 live)路径
+`run --adapter dsh` 全链路(执行 → 统一 Trace → 评测 → SQLite/JSONL 持久化 → pass^k →
+门禁)真机一次通过;`compare` 新增 `--adapter dsh`——两侧各跑一遍真实 headless 会话
+(顺序执行防产物竞争,agentVersion=baseline/candidate 落库标签,dsh 模式 repeats 缺省 1
+并打印会话预算),同一 RegressionGate 按 pass^k 判定。首跑:2 场景 × 2 侧,4 会话全部
+SUCCESS,pass^k 1.000 → 1.000 门禁放行。详见
+`docs/reports/dsh-controlled-compare-e2e.md`。
+
+**待办**:真 Agent 上的退化候选演示(candidate 侧换模型/配置,需适配器支持 per-side
+配置);`--repeats>=2` 的真机 pass^k 分层测量。
 
 **重复调用检测升级（callId 感知，已完成）**：原实现按「相邻 TOOL_CALL 同名」计数，
 同名不同参（如连续 `read` 不同文件）会误报为 retry loop，且无法区分真重试与并行调用。

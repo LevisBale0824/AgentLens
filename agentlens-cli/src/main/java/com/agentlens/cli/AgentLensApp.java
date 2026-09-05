@@ -25,6 +25,7 @@ import java.util.Set;
  * AgentLens CLI. Usage:
  *   run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden T1,T2]
  *   compare --baseline BEHAVIOR --candidate BEHAVIOR [--scenarios PATH] [--repeats K]
+ *           [--adapter dsh]   (both sides = real headless DSH sessions)
  *   demo
  */
 public final class AgentLensApp {
@@ -282,31 +283,93 @@ public final class AgentLensApp {
     /**
      * Release comparison: runs the same fixed dataset with baseline and candidate
      * agent versions, then gates on pass^k / avg pass rate regression.
+     *
+     * <p>With {@code --adapter dsh} both sides are real headless DSH sessions of
+     * the same scenario set (the controlled, non-live path): two independent
+     * release measurements of the agent, compared by the same gate. Sessions run
+     * sequentially (parallel sessions in one workdir would race on artifacts);
+     * each run is persisted with agentVersion=baseline/candidate.
      */
     private static void compare(Map<String, String> opts) throws Exception {
         Path scenariosPath = Path.of(opts.getOrDefault("scenarios", DEFAULT_SCENARIOS));
-        int repeats = intOf(opts.get("repeats"), 5);
+        String adapterName = opts.getOrDefault("adapter", "mock");
+        // dsh sessions cost real quota: default to a single repeat unless asked otherwise.
+        int repeats = intOf(opts.get("repeats"), "dsh".equals(adapterName) ? 1 : 5);
         String baselineBehavior = opts.getOrDefault("baseline", "correct");
         String candidateBehavior = opts.getOrDefault("candidate", "flaky");
 
         List<Scenario> scenarios = new ScenarioLoader().load(scenariosPath);
         List<AgentTask> tasks = scenarios.stream().map(Scenario::toTask).toList();
-        System.out.printf("comparing releases on %d scenarios from %s, repeats=%d%n",
-                scenarios.size(), scenariosPath, repeats);
+        System.out.printf("comparing releases on %d scenarios from %s, repeats=%d, adapter=%s%n",
+                scenarios.size(), scenariosPath, repeats, adapterName);
+        if ("dsh".equals(adapterName)) {
+            System.out.printf("estimated dsh sessions: %d (sides=2 x scenarios=%d x repeats=%d)%n",
+                    2 * scenarios.size() * repeats, scenarios.size(), repeats);
+        }
 
-        var baseSummary = evaluateVersion(baselineBehavior, tasks, repeats);
-        var candSummary = evaluateVersion(candidateBehavior, tasks, repeats);
+        PassK.Summary baseSummary, candSummary;
+        String baseLabel, candLabel;
+        if ("dsh".equals(adapterName)) {
+            var dsh = (com.agentlens.adapters.dsh.DshAgentAdapter) AdapterRegistry.load().get("dsh");
+            baseSummary = evaluateDshVersion(dsh, scenarios, repeats, "baseline", opts);
+            candSummary = evaluateDshVersion(dsh, scenarios, repeats, "candidate", opts);
+            baseLabel = "dsh-headless";
+            candLabel = "dsh-headless";
+        } else {
+            baseSummary = evaluateVersion(baselineBehavior, tasks, repeats);
+            candSummary = evaluateVersion(candidateBehavior, tasks, repeats);
+            baseLabel = "mock-" + baselineBehavior;
+            candLabel = "mock-" + candidateBehavior;
+        }
 
         System.out.printf("%n%-10s %-22s pass^k=%.3f  avgPassRate=%.3f%n",
-                "baseline", "mock-" + baselineBehavior, baseSummary.passPowK(), baseSummary.avgPassRate());
+                "baseline", baseLabel, baseSummary.passPowK(), baseSummary.avgPassRate());
         System.out.printf("%-10s %-22s pass^k=%.3f  avgPassRate=%.3f%n",
-                "candidate", "mock-" + candidateBehavior, candSummary.passPowK(), candSummary.avgPassRate());
+                "candidate", candLabel, candSummary.passPowK(), candSummary.avgPassRate());
 
         printLayered("candidate", candSummary);
 
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).compare(baseSummary, candSummary);
         System.out.printf("%nrelease gate: passed=%s%n  reason=%s%n", gate.passed(), gate.reason());
         if (!gate.passed()) System.exit(1);
+    }
+
+    /**
+     * One compare side on the real DSH agent: runs the scenario set sequentially
+     * through headless sessions, evaluates + diagnoses + persists each run, and
+     * aggregates the pass^k summary. {@code version} tags the persisted runs
+     * (agentVersion=baseline/candidate) so show/report can tell the sides apart.
+     */
+    private static PassK.Summary evaluateDshVersion(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
+                                                    List<Scenario> scenarios, int repeats, String version,
+                                                    Map<String, String> opts) throws Exception {
+        var registry = new EvaluatorRegistry()
+                .register(new TaskCompletionEvaluator())
+                .register(new RunLimitEvaluator())
+                .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
+                .register(new ComplianceEvaluator());
+        var diagnosis = new com.agentlens.eval.DiagnosisEngine();
+        Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
+        try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
+            for (int repeat = 1; repeat <= repeats; repeat++) {
+                for (Scenario scenario : scenarios) {
+                    var task = scenario.toTask();
+                    System.out.printf("%n[%s] repeat %d/%d: %s%n", version, repeat, repeats, task.id());
+                    AgentRun run = dsh.run(task);
+                    var results = registry.evaluate(task, run);
+                    var diagnoses = diagnosis.diagnose(task, run, results);
+                    System.out.printf("  => status=%s duration=%dms events=%d diagnoses=%d%n",
+                            run.status(), run.durationMs(), run.events().size(), diagnoses.size());
+                    diagnoses.forEach(d -> System.out.printf("     ! %-13s %s%n", d.layer(), d.issue()));
+                    sqlite.saveRun(run, dsh.name());
+                    sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), task.id(),
+                            dsh.name(), version, run.startedAt(), results,
+                            Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens())));
+                    byTask.computeIfAbsent(task.id(), t -> new ArrayList<>()).add(results);
+                }
+            }
+        }
+        return PassK.summarize(byTask);
     }
 
     private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats)

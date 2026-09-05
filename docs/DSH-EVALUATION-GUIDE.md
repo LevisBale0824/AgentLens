@@ -160,6 +160,23 @@ run(task) 流程：
 - `release gate: passed=false` → exit 1，可直接接 CI。
 - `show --run RUN_ID` 还原任意一次运行的完整轨迹与评测（SQLite 持久化）。
 
+### 5. 发版对比（compare --adapter dsh）
+
+```bash
+mvn -q exec:java -pl agentlens-cli \
+  "-Dexec.mainClass=com.agentlens.cli.AgentLensApp" \
+  "-Dexec.args=compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenarios.json --repeats 1"
+```
+
+- baseline/candidate 两侧各把同一固定场景集完整跑一遍真实 headless 会话，
+  由同一 `RegressionGate` 按 pass^k 对比判定；落库以 `agentVersion=baseline|candidate` 区分。
+- 顺序执行（并行会话会竞争同一 workdir 的任务产物）；场景建议选**幂等任务**
+  （覆写型产物、对只读输入计数），保证 candidate 侧在 baseline 产物已存在时仍可真实重跑。
+- **配额护栏**：dsh 模式 `--repeats` 缺省为 1（mock 仍为 5），输出头部打印
+  `estimated dsh sessions: N`；会话数 = 2 × 场景数 × repeats。
+- 首跑实录（2 场景 × 2 侧，4 会话全 SUCCESS，门禁放行）见
+  [docs/reports/dsh-controlled-compare-e2e.md](reports/dsh-controlled-compare-e2e.md)。
+
 ### 5. baseline/candidate 对比
 
 对 DSH 的典型用法（当前 `compare` 子命令的 --baseline/--candidate 语义仍是 mock 行为，

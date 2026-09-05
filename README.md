@@ -47,8 +47,9 @@ CLI 命令：
 # 运行 20 场景数据集，pass^k 聚合 + 稳定性门禁（--adapter 可选 mock/cli/http/dsh）
 AgentLensApp run [--scenarios PATH] [--repeats K] [--adapter NAME] [--allowed T1,T2] [--forbidden T1,T2]
 
-# baseline/candidate 发版对比（核心演示）
+# baseline/candidate 发版对比（核心演示；--adapter dsh 两侧均为真实 headless 会话）
 AgentLensApp compare --baseline correct --candidate flaky [--scenarios PATH] [--repeats K]
+AgentLensApp compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenarios.json
 
 # 导入已有 DSH session log：zstd 解码 → 统一 Trace → 评测 + 诊断（零成本离线分析）
 AgentLensApp import --session PATH/TO/session.jsonl.zstd [--task ID]
