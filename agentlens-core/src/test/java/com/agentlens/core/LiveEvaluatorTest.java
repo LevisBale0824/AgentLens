@@ -41,18 +41,65 @@ class LiveEvaluatorTest {
     }
 
     @Test
-    void flagsConsecutiveRepeatCallsButNotParallelBursts() {
+    void flagsConsecutiveIdenticalRepeatsOnce() {
         var evaluator = new LiveEvaluator(Set.of(), 100, 3);
-        // Interleaved different tools: not a loop.
+        // three identical completed calls: loop signal fires exactly at the threshold
+        for (int i = 0; i < 3; i++) {
+            evaluator.onEvent(i * 2, toolCall("pwsh"));
+            evaluator.onEvent(i * 2 + 1, toolResult("pwsh", "ok"));
+        }
+        var repeats = evaluator.verdicts().stream()
+                .filter(v -> v.rule().equals("repeated-calls")).toList();
+        assertEquals(1, repeats.size());
+        assertFalse(repeats.get(0).hardViolation());
+        assertTrue(repeats.get(0).message().contains("no progress"));
+    }
+
+    @Test
+    void retryAfterErrorNamesTheErrorInVerdict() {
+        var evaluator = new LiveEvaluator(Set.of(), 100, 2);
         evaluator.onEvent(0, toolCall("read"));
-        evaluator.onEvent(1, toolCall("grep"));
+        evaluator.onEvent(1, toolResult("read", "error"));
         evaluator.onEvent(2, toolCall("read"));
+        var repeats = evaluator.verdicts().stream()
+                .filter(v -> v.rule().equals("repeated-calls")).toList();
+        assertEquals(1, repeats.size());
+        assertTrue(repeats.get(0).message().contains("re-called after error"));
+    }
+
+    @Test
+    void parallelBurstDoesNotFireLoopVerdict() {
+        var evaluator = new LiveEvaluator(Set.of(), 100, 3);
+        // three identical calls with no results in between: parallel burst, not a loop
+        evaluator.onEvent(0, toolCall("pwsh"));
+        evaluator.onEvent(1, toolCall("pwsh"));
+        evaluator.onEvent(2, toolCall("pwsh"));
+        assertTrue(evaluator.verdicts().stream().noneMatch(v -> v.rule().equals("repeated-calls")));
+    }
+
+    @Test
+    void sameToolWithDifferentArgumentsIsNotALoop() {
+        var evaluator = new LiveEvaluator(Set.of(), 100, 3);
+        evaluator.onEvent(0, new AgentEvent(EventType.TOOL_CALL, "read",
+                java.util.Map.of("arguments", "a.txt"), Instant.now(), 0));
+        evaluator.onEvent(1, toolResult("read", "ok"));
+        evaluator.onEvent(2, new AgentEvent(EventType.TOOL_CALL, "read",
+                java.util.Map.of("arguments", "b.txt"), Instant.now(), 0));
+        evaluator.onEvent(3, toolResult("read", "ok"));
+        evaluator.onEvent(4, new AgentEvent(EventType.TOOL_CALL, "read",
+                java.util.Map.of("arguments", "c.txt"), Instant.now(), 0));
         assertTrue(evaluator.verdicts().isEmpty());
-        // Three identical consecutive calls: loop signal.
-        evaluator.onEvent(3, toolCall("pwsh"));
-        evaluator.onEvent(4, toolCall("pwsh"));
-        evaluator.onEvent(5, toolCall("pwsh"));
-        assertTrue(evaluator.verdicts().stream().anyMatch(v -> v.rule().equals("repeated-calls")));
+    }
+
+    @Test
+    void interleavedDifferentToolsAreNotFlagged() {
+        var evaluator = new LiveEvaluator(Set.of(), 100, 3);
+        evaluator.onEvent(0, toolCall("read"));
+        evaluator.onEvent(1, toolResult("read", "ok"));
+        evaluator.onEvent(2, toolCall("grep"));
+        evaluator.onEvent(3, toolResult("grep", "ok"));
+        evaluator.onEvent(4, toolCall("read"));
+        assertTrue(evaluator.verdicts().stream().noneMatch(v -> v.rule().equals("repeated-calls")));
     }
 
     @Test
@@ -66,5 +113,10 @@ class LiveEvaluatorTest {
 
     private static AgentEvent toolCall(String name) {
         return new AgentEvent(EventType.TOOL_CALL, name, java.util.Map.of(), Instant.now(), 0);
+    }
+
+    private static AgentEvent toolResult(String name, String status) {
+        return new AgentEvent(EventType.TOOL_RESULT, name, java.util.Map.of("status", status),
+                Instant.now(), 0);
     }
 }

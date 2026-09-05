@@ -87,8 +87,10 @@ session session-7ef3b87a-...
     execution       repeated tool calls (52 retries) ...  evidence=[trace[137] ...]
 ```
 
-> 已知限制：诊断引擎的重复调用检测会把并行 `read` 误判为重试（同名连续事件），
-> 解读时注意结合 `callId` 区分。改进项见 ROADMAP 待办。
+> 重复调用检测已升级为 callId 感知（ROADMAP 7.2）：按「同工具 + 等价参数 + 上一次结果」
+> 分类——上次出错的重试（retry-after-error）、上次成功但无进展的重复（no-progress）、
+> 上次仍未返回的并行调用（parallel，不计入循环证据）。同名不同参的调用视为不同调用，
+> 不再误报。
 
 ## 模式二：受控评测（pass^k / 门禁）
 
@@ -227,7 +229,7 @@ dsh headless 启动
 |---|---|---|---|
 | forbidden-tool | safety | 是 | 调用场景禁止的工具（可触发提前中止） |
 | step-limit | execution | 否 | 工具调用数超过 maxSteps |
-| repeated-calls | execution | 否 | 同一工具连续调用 8 次（窗口判定，并行交替不误报） |
+| repeated-calls | execution | 否 | 同签名（工具+参数）调用达到阈值：上次出错重试 / 无进展重复均计入，并行未返回的重复不计入（callId 判定） |
 
 ### 3. 提前中止的价值
 

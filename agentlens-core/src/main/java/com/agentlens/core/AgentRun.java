@@ -28,15 +28,24 @@ public record AgentRun(
         return events.stream().filter(event -> event.type() == EventType.ERROR).count();
     }
 
-    /** Counts repeated calls to the same tool, a useful proxy for avoidable retries. */
+    /**
+     * Counts repeated calls to the same tool with equivalent arguments
+     * (retry-after-error plus no-progress repeats). CallId-aware: parallel
+     * duplicates of an unanswered call are excluded, and same-name calls with
+     * different arguments are distinct calls, not repeats.
+     */
     public long repeatedToolCallCount() {
-        String previous = null;
-        long repeated = 0;
-        for (AgentEvent event : events) {
-            if (event.type() != EventType.TOOL_CALL) continue;
-            if (event.name() != null && event.name().equals(previous)) repeated++;
-            previous = event.name();
-        }
-        return repeated;
+        return repeatedToolCallAttempts().stream()
+                .filter(a -> a.kind() == ToolRepeatDetector.Kind.RETRY
+                        || a.kind() == ToolRepeatDetector.Kind.NO_PROGRESS)
+                .count();
+    }
+
+    /** Full per-call classification (kind + trace index) for evidence chains. */
+    public List<ToolRepeatDetector.Attempt> repeatedToolCallAttempts() {
+        ToolRepeatDetector detector = new ToolRepeatDetector();
+        List<AgentEvent> all = events;
+        for (int i = 0; i < all.size(); i++) detector.onEvent(i, all.get(i));
+        return detector.attempts();
     }
 }

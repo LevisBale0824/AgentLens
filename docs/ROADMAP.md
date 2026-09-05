@@ -335,8 +335,20 @@ AgentLens 的差异化定位决定了 pass^k 必要：卖点是"Agent 行为可�
 - **场景模型扩展**：`Scenario` 新增 `adapter` / `workdir` / `instruction` 字段，
   `agent_behavior: external` 表示真实 Agent（无预设脚本行为）。
 
-**待办**：受控模式端到端实测（消耗 LLM 配额，择机执行）；DSH 版 baseline/candidate compare；
-诊断引擎重复调用检测需结合 callId 区分并行调用与真重试。
+**待办**：受控模式（非 live 路径）独立实测；DSH 版 baseline/candidate compare（真 Agent
+的 pass^k 对比门禁演示）。
+
+**重复调用检测升级（callId 感知，已完成）**：原实现按「相邻 TOOL_CALL 同名」计数，
+同名不同参（如连续 `read` 不同文件）会误报为 retry loop，且无法区分真重试与并行调用。
+新增 `ToolRepeatDetector`（core），按调用签名（工具 + 去除 callId/attempt/step/phase/turn
+等易变属性后的参数）+ callId 配对的 TOOL_RESULT 结果，把每次调用分类为：
+retry-after-error（上次出错重试，最强循环信号）/ no-progress（上次成功但无进展）/
+parallel（上次仍未返回的并行重复，**不计入**循环证据）/ first。三处接入：
+`AgentRun.repeatedToolCallCount/repeatedToolCallAttempts`（批量回放）、
+`DiagnosisEngine` 重复调用规则（证据链含最近 3 次重试的 trace[i] 引用 + retries /
+noProgress / parallelExcluded 计数分解，confidence 0.95 vs 0.7 按是否含错误重试分级）、
+`LiveEvaluator`（verdict 消息区分 "re-called after error" 与 "no progress"，
+并行爆发不再触发 repeated-calls）。
 
 **compliance 红线评测器（已落地，任务二）**：`ComplianceEvaluator` 以确定性规则分析统一 Trace
 的 TOOL_CALL/TOOL_RESULT 参数，抓数据级作弊（工具名策略看不到的行为）。hard（H1 篡改
@@ -353,7 +365,8 @@ not_verifiable，向后兼容；Mock 行为库新增 cheat_tamper / cheat_hardco
 - ✅ `DshSessionLogWatcher`：session log 增量 tail——文件增长轮询 + 重扫 zstd 帧 +
   只解新帧 + 部分行缓冲；撕裂帧自动跳过、补全后消费（8 个测试含竞态场景）。
 - ✅ `LiveEvaluator`（core 模块）：在线判定——forbidden tool（硬违规）/ 步数超限 /
-  连续重复调用（滑动窗口，并行交替不误报），每条 verdict 携带事件索引。
+  连续重复调用（callId 感知：真重试与无进展重复计为循环证据，并行未返回的调用不误报），
+  每条 verdict 携带事件索引。
 - ✅ `DshAgentAdapter.run(task, live)`：实时模式——事件流回调 + `shouldAbort` 触发
   即刻 `destroyForcibly`，中止 run 标记 CANCELLED 并记录原因；结束后仍读完整日志
   保证终态判定。

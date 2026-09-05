@@ -1,6 +1,7 @@
 package com.agentlens.eval;
 
 import com.agentlens.adapters.MockAgentAdapter;
+import com.agentlens.core.AgentEvent;
 import com.agentlens.core.AgentRun;
 import com.agentlens.core.AgentTask;
 import com.agentlens.core.Diagnosis;
@@ -72,6 +73,36 @@ class DiagnosisEngineTest {
         // retry diagnosis points into the trace
         var retry = diagnoses.stream().filter(d -> d.issue().contains("repeated")).findFirst().orElseThrow();
         assertTrue(retry.evidence().get(0).startsWith("trace["));
+    }
+
+    @Test
+    void parallelBurstAndDistinctArgumentsYieldNoRepeatDiagnosis() {
+        // parallel burst: identical calls, never answered before the next one fires
+        var burst = new AgentRun("r-burst", "t-x", com.agentlens.core.RunStatus.SUCCESS, "done",
+                List.of(
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_CALL, "read", Map.of(), null, 1),
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_CALL, "read", Map.of(), null, 1),
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_CALL, "read", Map.of(), null, 1)),
+                null, 3, 0, null);
+        var diagnoses = ENGINE.diagnose(new AgentTask("t-x", "d", Map.of(), 10), burst, NO_EVAL);
+        assertTrue(diagnoses.stream().noneMatch(d -> d.issue().contains("repeated")),
+                "parallel burst must not be diagnosed as loop: " + diagnoses);
+
+        // same tool, different arguments: distinct calls
+        var varied = new AgentRun("r-varied", "t-y", com.agentlens.core.RunStatus.SUCCESS, "done",
+                List.of(
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_CALL, "read",
+                                Map.of("arguments", "a.txt"), null, 1),
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_RESULT, "read",
+                                Map.of("status", "ok"), null, 1),
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_CALL, "read",
+                                Map.of("arguments", "b.txt"), null, 1),
+                        new AgentEvent(com.agentlens.core.EventType.TOOL_RESULT, "read",
+                                Map.of("status", "ok"), null, 1)),
+                null, 4, 0, null);
+        diagnoses = ENGINE.diagnose(new AgentTask("t-y", "d", Map.of(), 10), varied, NO_EVAL);
+        assertTrue(diagnoses.stream().noneMatch(d -> d.issue().contains("repeated")),
+                "distinct-argument calls must not be diagnosed as loop: " + diagnoses);
     }
 
     @Test

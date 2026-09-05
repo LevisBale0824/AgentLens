@@ -29,12 +29,17 @@ class CoreModelTest {
     void runExposesOperationalQualitySignals() {
         var events = List.of(
                 new AgentEvent(EventType.TOOL_CALL, "query", Map.of(), null, 1),
+                new AgentEvent(EventType.TOOL_RESULT, "query", Map.of("status", "ok"), null, 1),
                 new AgentEvent(EventType.TOOL_CALL, "query", Map.of(), null, 1),
+                new AgentEvent(EventType.TOOL_RESULT, "query", Map.of("status", "ok"), null, 1),
                 new AgentEvent(EventType.ERROR, "timeout", Map.of(), null, 1));
         var run = new AgentRun("r1", "t1", RunStatus.FAILED, null, events, null, 3, 12, "timeout");
         assertEquals(2, run.toolCallCount());
         assertEquals(1, run.errorCount());
         assertEquals(1, run.repeatedToolCallCount());
+        // callId-aware classification: FIRST then a no-progress repeat
+        assertEquals(2, run.repeatedToolCallAttempts().size());
+        assertEquals(ToolRepeatDetector.Kind.NO_PROGRESS, run.repeatedToolCallAttempts().get(1).kind());
     }
 
     @Test

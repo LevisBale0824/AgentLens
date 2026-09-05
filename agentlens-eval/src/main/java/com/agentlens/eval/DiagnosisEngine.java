@@ -81,25 +81,44 @@ public final class DiagnosisEngine {
             return out;
         }
 
-        /** execution: same tool called consecutively indicates a retry loop. */
+        /**
+         * execution: repeated identical calls (callId-aware). Retry-after-error
+         * and no-progress repeats count as loop evidence; parallel duplicates
+         * of an unanswered call are excluded from both the count and the issue.
+         */
         List<Diagnosis> repeatedToolCalls() {
-            long repeated = run.repeatedToolCallCount();
-            if (repeated < 2) return List.of();
-            int worst = 0, streak = 1;
-            for (int i = 1; i < events.size(); i++) {
-                AgentEvent prev = events.get(i - 1), cur = events.get(i);
-                boolean bothCalls = prev.type() == EventType.TOOL_CALL && cur.type() == EventType.TOOL_CALL;
-                if (bothCalls && prev.name() != null && prev.name().equals(cur.name())) {
-                    streak++;
-                    worst = Math.max(worst, i);
-                } else streak = 1;
+            List<ToolRepeatDetector.Attempt> attempts = run.repeatedToolCallAttempts();
+            long retries = attempts.stream().filter(a -> a.kind() == ToolRepeatDetector.Kind.RETRY).count();
+            long noProgress = attempts.stream().filter(a -> a.kind() == ToolRepeatDetector.Kind.NO_PROGRESS).count();
+            long parallel = attempts.stream().filter(a -> a.kind() == ToolRepeatDetector.Kind.PARALLEL).count();
+            long flagged = retries + noProgress;
+            if (flagged < 2) return List.of();
+
+            List<ToolRepeatDetector.Attempt> evidenceAttempts = attempts.stream()
+                    .filter(a -> a.kind() == ToolRepeatDetector.Kind.RETRY
+                            || a.kind() == ToolRepeatDetector.Kind.NO_PROGRESS)
+                    .toList();
+            List<String> evidence = new ArrayList<>();
+            evidenceAttempts.stream().skip(Math.max(0, evidenceAttempts.size() - 3))
+                    .forEach(a -> evidence.add(ref(a.eventIndex())));
+            evidence.add("retries=" + retries + " noProgress=" + noProgress
+                    + (parallel > 0 ? " parallelExcluded=" + parallel : ""));
+
+            ToolRepeatDetector.Attempt worst = evidenceAttempts.get(evidenceAttempts.size() - 1);
+            for (ToolRepeatDetector.Attempt a : evidenceAttempts) {
+                if (a.kind() == ToolRepeatDetector.Kind.RETRY) { worst = a; break; }
             }
-            return List.of(new Diagnosis("execution",
-                    "repeated tool calls (" + repeated + " retries) - possible loop",
-                    Math.min(1.0, repeated / 5.0), 0.9,
-                    List.of(ref(worst), "repeated=" + repeated),
-                    "Break the retry loop: inspect results before re-calling, or add a max-retry guard",
-                    Map.of("repeatedCalls", repeated, "eventIndex", worst)));
+            String issue = "repeated tool calls: " + retries + " retry-after-error + "
+                    + noProgress + " no-progress repeats - possible loop";
+            // error-terminated repeats are the strongest loop signal; ok-outcome repeats may be legitimate
+            double confidence = retries > 0 ? 0.95 : 0.7;
+            return List.of(new Diagnosis("execution", issue,
+                    Math.min(1.0, flagged / 5.0), confidence,
+                    evidence,
+                    "Break the loop: inspect results before re-calling, vary arguments, or add a max-retry guard",
+                    Map.of("repeatedCalls", flagged, "retries", retries,
+                            "noProgressRepeats", noProgress, "parallelDuplicates", parallel,
+                            "eventIndex", worst.eventIndex())));
         }
 
         /** execution: exceeded the scenario step limit. */

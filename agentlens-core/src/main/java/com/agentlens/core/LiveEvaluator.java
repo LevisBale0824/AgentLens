@@ -1,11 +1,7 @@
 package com.agentlens.core;
 
 import java.util.ArrayList;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -19,7 +15,8 @@ import java.util.function.Consumer;
  * <ul>
  *   <li>safety      - a call to a forbidden tool (zero-tolerance, hard)</li>
  *   <li>execution   - step limit exceeded (max tool calls)</li>
- *   <li>execution   - same tool called repeatedly without progress (loop proxy)</li>
+ *   <li>execution   - repeated identical calls without progress; callId-aware,
+ *       so parallel duplicates of an unanswered call are not misread as a loop</li>
  * </ul>
  *
  * <p>Deliberately excludes task-completion judging: the final answer does not
@@ -38,8 +35,9 @@ public final class LiveEvaluator {
     private final Consumer<Verdict> sink;
 
     private int toolCalls;
-    private final Map<String, Integer> consecutiveByName = new LinkedHashMap<>();
-    private final Deque<String> recentTools = new ArrayDeque<>();
+    private final ToolRepeatDetector repeats = new ToolRepeatDetector();
+    private String streakSignature;
+    private int streak;
 
     /** @param repeatThreshold consecutive identical tool calls flagged as a loop (0 disables) */
     public LiveEvaluator(Set<String> forbiddenTools, int maxToolCalls, int repeatThreshold) {
@@ -54,8 +52,19 @@ public final class LiveEvaluator {
         this.sink = sink;
     }
 
-    /** Feeds one streaming event; emits verdicts via the sink as they fire. */
+    /**
+     * Feeds one streaming event; emits verdicts via the sink as they fire.
+     *
+     * <p>Repeat rule (callId-aware): only RETRY (previous identical call
+     * errored) and NO_PROGRESS (previous identical call completed) extend the
+     * streak; a parallel duplicate of a still-unanswered call never counts,
+     * so parallel bursts do not trigger the loop verdict.
+     */
     public void onEvent(int eventIndex, AgentEvent event) {
+        if (event.type() == EventType.TOOL_RESULT) {
+            repeats.onEvent(eventIndex, event); // attribute outcome to its call
+            return;
+        }
         if (event.type() != EventType.TOOL_CALL || event.name() == null) return;
         String tool = event.name();
 
@@ -72,17 +81,23 @@ public final class LiveEvaluator {
         }
 
         if (repeatThreshold > 0) {
-            recentTools.addLast(tool);
-            consecutiveByName.merge(tool, 1, Integer::sum);
-            if (recentTools.size() > repeatThreshold) {
-                String evicted = recentTools.pollFirst();
-                consecutiveByName.merge(evicted, -1, Integer::sum);
-                if (consecutiveByName.get(evicted) == 0) consecutiveByName.remove(evicted);
+            repeats.onEvent(eventIndex, event);
+            ToolRepeatDetector.Attempt attempt =
+                    repeats.attempts().get(repeats.attempts().size() - 1);
+            if (attempt.kind() == ToolRepeatDetector.Kind.PARALLEL) {
+                // duplicate of an in-flight call: no loop evidence
+            } else if (attempt.signature().equals(streakSignature)) {
+                streak++;
+            } else {
+                streakSignature = attempt.signature();
+                streak = 1;
             }
-            if (recentTools.size() == repeatThreshold
-                    && consecutiveByName.size() == 1 && consecutiveByName.containsKey(tool)) {
+            if (streak == repeatThreshold) {
+                String why = attempt.kind() == ToolRepeatDetector.Kind.RETRY
+                        ? "re-called after error"
+                        : "identical arguments, no progress";
                 emit(new Verdict("execution", "repeated-calls",
-                        "tool '" + tool + "' called " + repeatThreshold + " times consecutively",
+                        "tool '" + tool + "' called " + streak + " times consecutively (" + why + ")",
                         eventIndex, false));
             }
         }
