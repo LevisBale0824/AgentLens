@@ -61,6 +61,10 @@ public final class AgentLensApp {
 
     /** Imports an existing DSH session log, maps it to the unified trace, and runs evaluators + diagnosis. */
     private static void importSession(Map<String, String> opts) throws Exception {
+        if (opts.containsKey("aiopslab")) {
+            importAiopslabSession(opts);
+            return;
+        }
         String session = opts.get("session");
         if (session == null || session.isBlank()) {
             System.err.println("usage: import --session PATH (a DSH session.jsonl or session.jsonl.zstd) [--task ID]");
@@ -97,6 +101,80 @@ public final class AgentLensApp {
         System.out.printf("  diagnoses: %d%n", diagnoses.size());
         diagnoses.forEach(d -> System.out.printf("    %-15s %-45s evidence=%s%n",
                 d.layer(), d.issue(), d.evidence()));
+    }
+
+    /**
+     * ROADMAP P2-2: imports a real AIOpsLab session JSON (results/&lt;id&gt;_&lt;ts&gt;.json),
+     * maps the ACI turns onto the unified trace, and evaluates + diagnoses + persists
+     * the run - the offline evaluation path for external agents (no cluster needed).
+     */
+    private static void importAiopslabSession(Map<String, String> opts) throws Exception {
+        String session = opts.get("session");
+        if (session == null || session.isBlank()) {
+            System.err.println("usage: import --aiopslab --session PATH (an AIOpsLab results/*.json)");
+            System.exit(2);
+        }
+        var imported = new com.agentlens.adapters.aiopslab.AIOpsLabSessionImporter()
+                .importSession(Path.of(session));
+        AgentRun run = imported.run();
+        System.out.printf("aiopslab session %s%n  agent=%s problem=%s events=%d status=%s duration=%dms tokens=%d%n",
+                run.runId(), imported.agentName(), imported.problemId(), run.events().size(),
+                run.status(), run.durationMs(), run.totalTokens());
+        run.events().stream().limit(40).forEach(e -> System.out.printf("  %-13s %-22s %s%n",
+                e.type(), e.name(), e.attributes()));
+
+        int steps = (int) run.events().stream()
+                .filter(e -> e.type() == com.agentlens.core.EventType.TOOL_CALL).count();
+        var task = new AgentTask(run.taskId(),
+                "AIOpsLab problem " + run.taskId(), Map.of(), steps + 10);
+        var registry = new EvaluatorRegistry()
+                .register(new TaskCompletionEvaluator())
+                .register(new RunLimitEvaluator())
+                .register(new ToolPolicyEvaluator(
+                        new java.util.HashSet<>(com.agentlens.adapters.aiopslab.AIOpsLabProblemCatalog.ACI_ACTIONS),
+                        Set.of()));
+        if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
+        var results = registry.evaluate(task, run);
+        System.out.println("  evaluation:");
+        results.forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
+                r.evaluator(), r.passed(), r.reason()));
+        var diagnoses = new com.agentlens.eval.DiagnosisEngine().diagnose(task, run, results);
+        System.out.printf("  diagnoses: %d%n", diagnoses.size());
+        diagnoses.forEach(d -> System.out.printf("    %-15s %-45s evidence=%s%n",
+                d.layer(), d.issue(), d.evidence()));
+
+        try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
+            sqlite.saveRun(run, "aiopslab:" + imported.agentName());
+            sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), run.taskId(),
+                    "aiopslab", "imported", run.startedAt(), results,
+                    Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens(),
+                            "problemId", String.valueOf(imported.problemId()))));
+        }
+        System.out.printf("  persisted run %s (adapter=aiopslab, version=imported)%n", run.runId());
+    }
+
+    /**
+     * ROADMAP P2-2: regenerates the AgentLens scenario dataset from AIOpsLab's
+     * official problem registry source (defaults to the committed verbatim
+     * fixture), so the 81-problem catalog can be refreshed whenever
+     * microsoft/AIOpsLab adds problems.
+     */
+    private static void aiopslabCatalog(Map<String, String> opts) throws Exception {
+        Path registry = Path.of(opts.getOrDefault("registry",
+                "agentlens-adapter-aiopslab/src/test/resources/aiopslab-registry.py"));
+        Path out = Path.of(opts.getOrDefault("out", "data/scenarios/aiopslab-scenarios.json"));
+        var problems = new com.agentlens.adapters.aiopslab.AIOpsLabProblemCatalog().parse(registry);
+        var scenarios = problems.stream()
+                .map(com.agentlens.adapters.aiopslab.AIOpsLabProblemCatalog::toScenario).toList();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        if (out.getParent() != null) java.nio.file.Files.createDirectories(out.getParent());
+        mapper.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), scenarios);
+        System.out.printf("aiopslab catalog: %d problems -> %s%n", scenarios.size(), out.toAbsolutePath());
+        problems.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        com.agentlens.adapters.aiopslab.AIOpsLabProblemCatalog.Problem::taskType,
+                        java.util.LinkedHashMap::new, java.util.stream.Collectors.counting()))
+                .forEach((type, count) -> System.out.printf("  %-13s %d%n", type, count));
     }
 
     /** Scenario-set default adapter: used when every scenario names the same adapter. */
@@ -219,9 +297,10 @@ public final class AgentLensApp {
             case "show" -> show(opts);
             case "report" -> report(opts);
             case "demo" -> demo(opts);
+            case "aiopslab-catalog" -> aiopslabCatalog(opts);
             default -> {
                 System.err.println("unknown command: " + command);
-                System.err.println("usage: run [...] | compare --baseline B --candidate B | show --run ID | report [--db PATH] [--out PATH] | demo");
+                System.err.println("usage: run [...] | compare --baseline B --candidate B | show --run ID | report [--db PATH] [--out PATH] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
                 System.exit(2);
             }
         }
@@ -406,7 +485,8 @@ public final class AgentLensApp {
         for (var layer : List.of(PassK.FailureLayer.STABLE_PASS,
                 PassK.FailureLayer.FLAKY, PassK.FailureLayer.STABLE_FAIL)) {
             List<String> ids = summary.layered().getOrDefault(layer, List.of());
-            if (!ids.isEmpty()) System.out.printf("  %-12s %d %s%n", layer, ids.size(), ids);
+            if (!ids.isEmpty()) System.out.printf("  %-12s %d %s%n", layer, ids.size(),
+                    ids.size() <= 8 ? ids : ids.subList(0, 8) + "...");
         }
     }
 
@@ -474,7 +554,7 @@ public final class AgentLensApp {
         Map<String, String> opts = new java.util.HashMap<>();
         // Skip the command word (args[0]) only when it is one, not when it is a flag.
         int start = args.length > 0 && !args[0].startsWith("--")
-                && List.of("run", "demo", "compare", "show", "report", "import").contains(args[0]) ? 1 : 0;
+                && List.of("run", "demo", "compare", "show", "report", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
         for (int i = start; i < args.length; i++) {
             if (!args[i].startsWith("--")) continue;
             String key = args[i].substring(2);

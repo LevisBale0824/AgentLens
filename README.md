@@ -54,6 +54,12 @@ AgentLensApp compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenar
 # 导入已有 DSH session log：zstd 解码 → 统一 Trace → 评测 + 诊断（零成本离线分析）
 AgentLensApp import --session PATH/TO/session.jsonl.zstd [--task ID]
 
+# 导入 AIOpsLab session JSON（P2-2：真实外部 Agent 会话 → 统一 Trace → 评测 + 诊断，零成本）
+AgentLensApp import --aiopslab --session PATH/TO/<session_id>_<ts>.json
+
+# 从 AIOpsLab 官方 registry.py 再生成 97 题场景数据集（默认用内置逐字 fixture）
+AgentLensApp aiopslab-catalog [--registry PATH] [--out data/scenarios/aiopslab-scenarios.json]
+
 # 按 run ID 还原完整评测（SQLite 持久化：trace 时间线 + 评测结果）
 AgentLensApp show --run RUN_ID
 AgentLensApp show --run list          # 列出全部 run ID
@@ -79,6 +85,7 @@ mock   行为参数化的 Mock Agent（内置默认）
 cli    任意 stdin/stdout 命令行 Agent
 http   OpenAI-compatible HTTP Agent
 dsh    DeepSeek Harness（headless 执行 + session log 轨迹导入）
+aiopslab  Microsoft AIOpsLab（97 题公开运维 Benchmark：目录/导入离线可用，集群桥接待环境）
 ```
 
 ### 评测 DSH（DeepSeek Harness）
@@ -114,8 +121,9 @@ docker compose up --build
 agentlens-core         领域模型和核心接口（Task、Event、Run、Trace 校验、SPI 适配器注册）
 agentlens-adapters     mock / cli / http 通用 Agent 适配器
 agentlens-adapter-dsh  DeepSeek Harness 适配器（headless 执行 + session log 导入）
+agentlens-adapter-aiopslab  AIOpsLab 适配器（问题目录 / session 导入 / 集群桥接）
 agentlens-eval         确定性评测器、pass^k 聚合、诊断引擎、回归门禁
-agentlens-cli          命令行入口（run / compare / import / show / report / demo）
+agentlens-cli          命令行入口（run / compare / import / show / report / aiopslab-catalog / demo）
 ```
 
 ## 评测体系

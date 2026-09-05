@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。CI 全链路自动验证。**剩余重点：AIOpsLab 接入（P2-2）、OpenTelemetry 兼容（P2-3）、DeepEval/Ragas 指标接入、judge 标定。**
+> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**剩余重点：AIOpsLab 集群实测 + K8sGPT、OpenTelemetry 兼容（P2-3）、DeepEval/Ragas 指标接入、judge 标定。**
 
 ## 优先级定义
 
@@ -198,12 +198,16 @@ P2 LLM Judge / Web UI / 外部集成
 - 记录 Judge 模型和 Prompt 版本。
 - 复用 DeepEval/Ragas 指标时通过 Adapter 接入。
 
-### P2-2：接入 AIOpsLab 和 K8sGPT
+### P2-2：接入 AIOpsLab 和 K8sGPT（适配层已完成；集群实测待环境）
 
-- 实现 AIOpsLab 任务 Adapter。
-- 运行可复现 Kubernetes 故障场景。
-- 接入 K8sGPT 作为外部被测 Agent。
-- 比较 Mock Agent、自研 Agent 和外部 Agent。
+- ✅ 实现 AIOpsLab 任务 Adapter：官方 registry.py → 97 题目录（31 故障 × 4 任务类型），
+  `aiopslab-catalog` 再生成 `data/scenarios/aiopslab-scenarios.json`。
+- ✅ AIOpsLab session JSON → 统一 Trace（`import --aiopslab`）：ACI 动作解析、callId 配对、
+  评测 + 诊断 + SQLite 持久化；重复调用检测在导入轨迹上实测触发。
+- ✅ SPI 集群桥接（`AGENTLENS_AIOPSLAB_HOME` → 官方 clients/client.py → 自动导入）。
+- ⬜ 运行可复现 Kubernetes 故障场景：待 kind + OpenEBS + Prometheus 环境就绪后实测桥接路径。
+- ⬜ 接入 K8sGPT 作为外部被测 Agent（cli/http 适配器或 session 导入对比）。
+- ⬜ 比较 Mock Agent、自研 Agent 和外部 Agent（依赖上两项）。
 
 ### P2-3：增加 OpenTelemetry 兼容
 

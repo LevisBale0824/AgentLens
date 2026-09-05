@@ -257,7 +257,7 @@ LLM Judge 只处理难以规则化的维度：解释质量、计划合理性、�
 
 - 支持 HTTP 和 CLI 两类 Agent。（Adapter 骨架就绪；实战接入待接真实 LLM，见 V1.1）
 - 至少一个 Mock Agent 和一个自研运维 Agent。（Mock Agent 行为库完成：correct/wrong_tool/forbidden_action/loop/flaky）
-- 至少一个公开运维环境或公开 Benchmark 接入。（待 V1.1：AIOpsLab）
+- 至少一个公开运维环境或公开 Benchmark 接入。🔶(AIOpsLab 任务/Trace Adapter 已落地:97 题目录 + session 导入 + SPI 集群桥接;完整集群实测待 V1.1)
 - 至少 20 个可复现故障场景。✅（data/scenarios/ops-scenarios.json，20 个）
 - 能记录完整 Agent Trace。✅（统一事件模型 + SQLite 全量持久化 + CLI show 按 run ID 还原）
 - 能识别工具错误、越权操作和循环调用。✅（ToolPolicyEvaluator + DiagnosisEngine trace 级规则）
@@ -400,6 +400,44 @@ not_verifiable，向后兼容；Mock 行为库新增 cheat_tamper / cheat_hardco
   否定判定如实参与 pass^k 与门禁(真机实证:mock-correct 的空洞回答被判 0.00 而门禁拒绝)。
 
 真机验证与故障复盘详见 `docs/reports/llm-judge-design.md`。
+
+### 7.4 P2-2: AIOpsLab 接入(任务/Trace Adapter 已落地;完整集群集成待环境)
+
+按 Day 13 既定降级路线(「若环境部署耗时,则先实现其任务/Trace Adapter」)推进。
+新模块 `agentlens-adapter-aiopslab`,以 microsoft/AIOpsLab main 分支真实接口为契约:
+
+- **问题目录 Adapter**:`AIOpsLabProblemCatalog` 解析官方
+  `orchestrator/problems/registry.py`(逐字 fixture,MIT 归属注释)——问题 ID 是结构化的
+  `<fault>-<task_type>-<variant>`,当前目录 **97 个问题实例 × 31 种故障**
+  (detection 35 / localization 35 / analysis 13 / mitigation 14)。故障段 → 根因真值
+  (31 项精确映射 + 前缀回退),任务类型 → ACI 动作集(基础 `get_logs/get_metrics/
+  get_traces/read_metrics/read_traces/exec_shell` + `submit`)。CLI
+  `aiopslab-catalog --registry PATH --out PATH` 一键再生成数据集
+  (`data/scenarios/aiopslab-scenarios.json`,97 场景,`adapter: aiopslab` +
+  `agent_behavior: external`),AIOpsLab 上游加题后可零改动刷新。
+- **Session Trace Adapter**:`AIOpsLabSessionImporter` 把真实 session JSON
+  (`results/<session_id>_<ts>.json`:agent/problem_id/start/end/trace/results)映射为统一
+  Trace——assistant 回复按 ResponseParser 约定抽取 ```api_name(args)``` 代码块 →
+  TOOL_CALL(callId=aci-<i>);不可解析回复 → MODEL_CALL;env 回复 → 配对的 TOOL_RESULT
+  (ACI 错误前缀标记 status=error);`submit(...)` → FINAL_ANSWER。run 状态:仅当
+  AIOpsLab 评测器实际产出结果(TTD/TTL/TTA/TTM/success)且已 submit 才判 SUCCESS。
+  CLI `import --aiopslab --session PATH` 对外部 Agent 会话离线跑评测 + 诊断 + SQLite
+  持久化(tool-policy 白名单 = ACI 动作集);callId 感知重复调用检测在导入轨迹上实测触发。
+- **集群桥接 Adapter(SPI)**:`AIOpsLabAdapter` 在 `AGENTLENS_AIOPSLAB_HOME` 指向
+  AIOpsLab 检出(且 kind 集群/ChaosMesh/Prometheus 就绪)时,驱动官方
+  `clients/client.py --agent <agent> --problem-id <id>` 并自动导入最新 session JSON;
+  未配置时 run 失败并给出清晰指引(离线路径不需要集群)。SPI 注册实测:
+  `available: [mock, cli, http, dsh, aiopslab]`。
+- **离线真机验证**:97 场景数据集 ScenarioLoader 加载 + mock 冒烟 pass^k=1.000;
+  合成真实格式 session(含错误后原样重试)导入 → 13 事件映射正确 →
+  `repeated tool calls: 2 retry-after-error` 诊断命中(证据 trace[4]/trace[8])→
+  `show --run` 完整复现。
+
+**待办(V1.1)**:kind 集群 + OpenEBS + Prometheus + 社交网络应用部署后,实测
+`AGENTLENS_AIOPSLAB_HOME` 桥接路径(真实外部 Agent 对 97 题目录的 pass^k 分层);
+K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIOpsLab 自主修复 Agent
+互补,可经 cli/http 适配器或 session 导入对比)。详见
+`docs/reports/aiopslab-integration.md`。
 
 ## 8. 长期 Roadmap
 

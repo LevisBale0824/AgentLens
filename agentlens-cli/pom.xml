@@ -25,6 +25,11 @@
         </dependency>
         <dependency>
             <groupId>com.agentlens</groupId>
+            <artifactId>agentlens-adapter-aiopslab</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.agentlens</groupId>
             <artifactId>agentlens-eval</artifactId>
             <version>${project.version}</version>
         </dependency>
