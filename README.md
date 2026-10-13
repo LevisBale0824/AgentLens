@@ -88,6 +88,9 @@ AgentLensApp compare --adapter dsh --candidate-override "dshArgs=--model m" --ot
 # 结构化日志（P2-5，可选）：--log-json 使 stderr 输出 NDJSON（含每次调用的 req- 请求 ID，始终回显）
 AgentLensApp run --scenarios PATH --log-json
 
+# Judge 标定（P2-1）：mock 行为语料 × 本地 judge 模型，输出 accuracy/precision/recall/F1/kappa
+AgentLensApp judge-calibrate --judge --samples 2 --out output/judge-calibration.json
+
 # 静态分析门禁（P2-5）：Checkstyle + SpotBugs 双检（CI 的 quality 作业同款）
 mvn -Pquality verify
 ```

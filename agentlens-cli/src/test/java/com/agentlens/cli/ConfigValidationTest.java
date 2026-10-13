@@ -113,4 +113,12 @@ class ConfigValidationTest {
         assertTrue(e.getMessage().contains("database not found"));
         assertDoesNotThrow(() -> AgentLensApp.validate("show", Map.of()));
     }
+
+    @Test
+    void judgeCalibrateSamplesMustBePositive() throws Exception {
+        assertDoesNotThrow(() -> AgentLensApp.validate("judge-calibrate", Map.of("samples", "2")));
+        ConfigException e = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("judge-calibrate", Map.of("samples", "x")));
+        assertTrue(e.getMessage().contains("samples must be an integer"));
+    }
 }

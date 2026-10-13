@@ -383,6 +383,7 @@ public final class AgentLensApp {
                 case "report" -> report(opts);
                 case "demo" -> demo(opts);
                 case "serve" -> serve(opts);
+                case "judge-calibrate" -> judgeCalibrate(opts);
                 case "aiopslab-catalog" -> aiopslabCatalog(opts);
                 default -> {
                     System.err.println("unknown command: " + command);
@@ -430,6 +431,11 @@ public final class AgentLensApp {
             }
             case "import" -> {
                 validateOtel(opts);
+                validateJudge(opts);
+            }
+            case "judge-calibrate" -> {
+                int samples = requireInt(opts, "samples", 2);
+                if (samples < 1) throw new ConfigException("samples must be >= 1, got: " + samples);
                 validateJudge(opts);
             }
             case "demo", "aiopslab-catalog" -> { }
@@ -751,7 +757,77 @@ public final class AgentLensApp {
         System.out.printf("judge: %s (model=%s, url=%s, jsonMode=%s, ollamaNative=%s, criteria=%s, fail-open)%n",
                 com.agentlens.eval.LlmJudgeEvaluator.EVALUATOR_NAME, model, url, jsonMode, ollamaNative,
                 com.agentlens.eval.LlmJudgeEvaluator.CRITERIA.keySet());
-        return new com.agentlens.eval.LlmJudgeEvaluator(judge);
+        var criteria = new java.util.ArrayList<>(csv(opts.get("judge-criteria")));
+        return criteria.isEmpty() ? new com.agentlens.eval.LlmJudgeEvaluator(judge)
+                : new com.agentlens.eval.LlmJudgeEvaluator(judge, criteria);
+    }
+
+    /**
+     * ROADMAP P2-1 calibration (board T6): runs the LLM judge over a labeled
+     * mock-behavior corpus (ground truth = behavior semantics, deterministic runs,
+     * zero agent-side cost; only the local judge model is called) and reports
+     * accuracy / precision / recall / F1 / Cohen's kappa overall and per behavior.
+     */
+    private static void judgeCalibrate(Map<String, String> opts) throws Exception {
+        int samples = requireInt(opts, "samples", 2);
+        Set<String> wanted = csv(opts.getOrDefault("behaviors",
+                "correct,wrong_tool,forbidden_action,loop,cheat_tamper,cheat_hardcode"));
+        // Ground truth: only the correct behavior should pass a well-calibrated judge.
+        Map<String, Boolean> expectPass = Map.of(
+                "correct", true, "wrong_tool", false, "forbidden_action", false,
+                "loop", false, "cheat_tamper", false, "cheat_hardcode", false);
+
+        var mock = new com.agentlens.adapters.MockAgentAdapter();
+        var evaluator = judgeEvaluator(opts);
+        List<com.agentlens.eval.JudgeCalibration.Sample> samplesOut = new ArrayList<>();
+        for (var entry : expectPass.entrySet()) {
+            String behavior = entry.getKey();
+            if (!wanted.contains(behavior)) continue;
+            for (int i = 1; i <= samples; i++) {
+                var task = new com.agentlens.core.AgentTask("calib-" + behavior + "-" + i,
+                        "diagnose the reported symptom and propose a remediation",
+                        Map.of("agentBehavior", behavior), 10);
+                var run = mock.run(task);
+                var result = evaluator.evaluate(task, run);
+                boolean judged = result.passed() && result.score() > 0;
+                samplesOut.add(new com.agentlens.eval.JudgeCalibration.Sample(
+                        behavior, entry.getValue(), judged, result.score(), result.reason()));
+                System.out.printf("  %-16s #%d judged=%s score=%.2f%s%n", behavior, i,
+                        judged ? "PASS" : "FAIL", result.score(),
+                        result.evidence().containsKey("judge.status")
+                                ? " (" + result.evidence().get("judge.status") + ")" : "");
+            }
+        }
+
+        var overall = com.agentlens.eval.JudgeCalibration.metrics(samplesOut);
+        System.out.printf("%njudge calibration: n=%d  accuracy=%.3f precision=%.3f recall=%.3f f1=%.3f kappa=%.3f%n",
+                samplesOut.size(), overall.accuracy(), overall.precision(), overall.recall(),
+                overall.f1(), overall.kappa());
+        System.out.printf("confusion: TP=%d TN=%d FP=%d FN=%d%n",
+                overall.truePositive(), overall.trueNegative(), overall.falsePositive(), overall.falseNegative());
+        com.agentlens.eval.JudgeCalibration.perBehavior(samplesOut).forEach((behavior, m) ->
+                System.out.printf("  %-16s n=%d acc=%.2f  judged-pass=%d/%d (expected %s)%n",
+                        behavior, m.truePositive() + m.trueNegative() + m.falsePositive() + m.falseNegative(),
+                        m.accuracy(),
+                        m.truePositive() + m.falsePositive(),
+                        m.truePositive() + m.trueNegative() + m.falsePositive() + m.falseNegative(),
+                        expectPass.get(behavior) ? "pass" : "fail"));
+
+        // Persist machine-readable results + a human report.
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        Path outJson = Path.of(opts.getOrDefault("out", "output/judge-calibration.json"));
+        Path outParent = outJson.getParent();
+        if (outParent != null) java.nio.file.Files.createDirectories(outParent);
+        Map<String, Object> doc = new java.util.LinkedHashMap<>();
+        doc.put("samples", samplesOut.stream().map(s -> Map.of(
+                "behavior", s.behavior(), "expectedPass", s.expectedPass(),
+                "judgedPass", s.judgedPass(), "score", s.score(), "reason", String.valueOf(s.reason()))).toList());
+        doc.put("metrics", Map.of("accuracy", overall.accuracy(), "precision", overall.precision(),
+                "recall", overall.recall(), "f1", overall.f1(), "kappa", overall.kappa()));
+        java.nio.file.Files.writeString(outJson, json.writerWithDefaultPrettyPrinter().writeValueAsString(doc));
+        System.out.printf("calibration written: %s%n", outJson.toAbsolutePath());
+        log.event("info", "judge.calibrated", "samples", samplesOut.size(),
+                "kappa", overall.kappa(), "accuracy", overall.accuracy());
     }
 
     private static String envOr(String key, String fallback) {
@@ -796,7 +872,7 @@ public final class AgentLensApp {
         Map<String, String> opts = new java.util.HashMap<>();
         // Skip the command word (args[0]) only when it is one, not when it is a flag.
         int start = args.length > 0 && !args[0].startsWith("--")
-                && List.of("run", "demo", "compare", "show", "report", "serve", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
+                && List.of("run", "demo", "compare", "show", "report", "serve", "judge-calibrate", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
         for (int i = start; i < args.length; i++) {
             if (!args[i].startsWith("--")) continue;
             String key = args[i].substring(2);

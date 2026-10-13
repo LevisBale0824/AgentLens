@@ -197,6 +197,13 @@ P2 LLM Judge / Web UI / 外部集成
 - Schema 校验、重试和缓存。
 - 记录 Judge 模型和 Prompt 版本。
 - 复用 DeepEval/Ragas 指标时通过 Adapter 接入。
+- ✅ 标定框架（board T6，ROADMAP 7.8）：`judge-calibrate` 命令——mock 行为语料
+  （correct/wrong_tool/forbidden_action/loop/cheat_tamper/cheat_hardcode，确定性生成、
+  零 Agent 侧成本）× N 次 × LLM judge（本地 Ollama），输出 accuracy/precision/recall/F1/
+  **Cohen's kappa**（总体 + 分行为）与混淆矩阵，结果落 `output/judge-calibration.json`。
+- ✅ `JudgeCalibration` 纯指标类（eval，5 单测：完美一致 κ=1、全 pass judge 高准确率低 κ、
+  反向 judge κ<0、分组保序、空语料）。
+- ⬜ 换更大 judge 模型对比 κ；标定结论写入 docs/reports/。
 
 ### P2-2：接入 AIOpsLab 和 K8sGPT（适配层已完成；集群实测待环境）
 

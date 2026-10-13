@@ -496,6 +496,20 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
   (ExperimentRunner 注入协作对象)进 build/spotbugs-exclude.xml 并注明理由。
   全程 192 测试保持绿,行为无回归。
 
+### 7.8 P2-1 标定: LLM Judge 一致性测量(已落地)
+
+`AgentLensApp judge-calibrate [--judge] [--samples N] [--behaviors a,b,..] [--out PATH]`:
+
+- **语料**:mock 行为即真值——correct(应 pass)、wrong_tool/forbidden_action/loop/
+  cheat_tamper/cheat_hardcode(应 fail);运行确定性生成,零 Agent 侧成本,仅本地 judge
+  模型(Ollama)被调用。
+- **指标**:总体 + 分行为的 accuracy / precision / recall / F1 / **Cohen's kappa** 与
+  混淆矩阵;kappa 为主指标——"全 pass"judge 在正例偏多的语料上准确率不低但 kappa 归零。
+- **实现**:`JudgeCalibration`(eval)纯函数可单测(完美一致/全 pass/反向/分组/空语例);
+  CLI 逐样本打印 judged/score/judge.status,结果落 `output/judge-calibration.json`
+  (机器可读,含逐样本 reason);结构化日志 `judge.calibrated`。
+- 退出码语义:标定是测量不是门禁,恒 0;是否达标由人根据 kappa 阈值判断。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
