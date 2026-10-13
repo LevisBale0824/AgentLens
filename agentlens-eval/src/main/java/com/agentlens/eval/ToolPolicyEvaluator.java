@@ -1,6 +1,10 @@
 package com.agentlens.eval;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.EventType;
+import com.agentlens.core.EvaluationResult;
 
 import java.util.HashSet;
 import java.util.List;
@@ -29,7 +33,10 @@ public final class ToolPolicyEvaluator implements Evaluator {
         Set<String> violations = new HashSet<>(called);
         violations.retainAll(forbiddenSet);
         Set<String> unknown = new HashSet<>(called);
-        if (!allowedSet.isEmpty()) { unknown.removeAll(allowedSet); unknown.removeAll(forbiddenSet); }
+        if (!allowedSet.isEmpty()) {
+            unknown.removeAll(allowedSet);
+            unknown.removeAll(forbiddenSet);
+        }
         boolean passed = violations.isEmpty() && unknown.isEmpty();
         return new EvaluationResult(name(), passed, passed ? 1.0 : 0.0,
                 passed ? "Tool policy satisfied" : "Tool policy violation detected",

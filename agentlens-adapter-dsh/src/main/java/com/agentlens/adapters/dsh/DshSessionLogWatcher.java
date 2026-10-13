@@ -42,7 +42,8 @@ public final class DshSessionLogWatcher implements AutoCloseable {
         this.pollMillis = pollMillis;
         this.onEvent = onEvent;
         this.onError = onError;
-        this.plainText = !file.getFileName().toString().endsWith(".zstd");
+        Path fileName = file.getFileName();
+        this.plainText = fileName == null || !fileName.toString().endsWith(".zstd");
     }
 
     /** Creates a watcher; call {@link #start()} to begin polling. */
@@ -97,7 +98,10 @@ public final class DshSessionLogWatcher implements AutoCloseable {
     /** One poll cycle: decode and emit everything durable that is newer than our offsets. */
     synchronized void poll() throws IOException {
         if (!Files.isRegularFile(file)) return;
-        if (plainText) { pollPlainText(); return; }
+        if (plainText) {
+            pollPlainText();
+            return;
+        }
         byte[] bytes = Files.readAllBytes(file);
         if (bytes.length < consumedBytes) { // truncated/rotated: reset and replay
             consumedBytes = 0;

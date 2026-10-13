@@ -1,6 +1,14 @@
 package com.agentlens.eval;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.Diagnosis;
+import com.agentlens.core.EventType;
+import com.agentlens.core.EvaluationResult;
+import com.agentlens.core.ExperienceCandidate;
+import com.agentlens.core.RunStatus;
+import com.agentlens.core.ToolRepeatDetector;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -106,7 +114,10 @@ public final class DiagnosisEngine {
 
             ToolRepeatDetector.Attempt worst = evidenceAttempts.get(evidenceAttempts.size() - 1);
             for (ToolRepeatDetector.Attempt a : evidenceAttempts) {
-                if (a.kind() == ToolRepeatDetector.Kind.RETRY) { worst = a; break; }
+                if (a.kind() == ToolRepeatDetector.Kind.RETRY) {
+                    worst = a;
+                    break;
+                }
             }
             String issue = "repeated tool calls: " + retries + " retry-after-error + "
                     + noProgress + " no-progress repeats - possible loop";

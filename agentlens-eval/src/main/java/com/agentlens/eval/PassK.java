@@ -63,5 +63,10 @@ public final class PassK {
     public record Summary(
             List<ScenarioPassK> perScenario, int scenarios,
             double passPowK, double avgPassRate,
-            Map<FailureLayer, List<String>> layered) {}
+            Map<FailureLayer, List<String>> layered) {
+        public Summary {
+            perScenario = List.copyOf(perScenario);
+            layered = Map.copyOf(layered);
+        }
+    }
 }

@@ -12,16 +12,27 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class DshSessionLogReaderTest {
 
     private static final List<String> LINES = List.of(
             "{\"type\": \"session\", \"version\": 0, \"id\": \"session-abc\", \"createdAt\": 1787145673496, \"cwd\": \"D:\\\\code\\\\AgentLens\", \"agentPreset\": \"standard\"}",
             "{\"type\": \"turn/start\", \"seq\": 4, \"time\": 1787145685177, \"data\": {\"turn\": 1}}",
-            "{\"type\": \"tool/call\", \"seq\": 123, \"time\": 1787145690540, \"data\": {\"turn\": 1, \"step\": 1, \"callId\": \"call_1\", \"name\": \"skill\", \"arguments\": \"{\\\"name\\\":\\\"x\\\"}\"}}",
-            "{\"type\": \"tool/result\", \"seq\": 124, \"time\": 1787145690554, \"data\": {\"turn\": 1, \"step\": 1, \"message\": {\"source\": {\"kind\": \"tool\", \"callId\": \"call_1\"}, \"content\": [{\"type\": \"tool-result\", \"content\": [{\"type\": \"text\", \"text\": \"ok\"}]}]}}}",
-            "{\"type\": \"assistant/message\", \"seq\": 130, \"time\": 1787145692000, \"data\": {\"turn\": 1, \"step\": 2, \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"reasoning\", \"text\": \"thinking\"}, {\"type\": \"text\", \"text\": \"final answer here\"}], \"source\": {\"kind\": \"model\", \"provider\": \"zai\", \"model\": \"glm-5.1\"}}}}"
+            "{\"type\": \"tool/call\", \"seq\": 123, \"time\": 1787145690540, \"data\":"
+                    + " {\"turn\": 1, \"step\": 1, \"callId\": \"call_1\", \"name\": \"skill\","
+                    + " \"arguments\": \"{\\\"name\\\":\\\"x\\\"}\"}}",
+            "{\"type\": \"tool/result\", \"seq\": 124, \"time\": 1787145690554, \"data\": {\"turn\": 1, \"step\": 1,"
+                    + " \"message\": {\"source\": {\"kind\": \"tool\", \"callId\": \"call_1\"}, \"content\":"
+                    + " [{\"type\": \"tool-result\", \"content\": [{\"type\": \"text\", \"text\": \"ok\"}]}]}}}",
+            "{\"type\": \"assistant/message\", \"seq\": 130, \"time\": 1787145692000, \"data\": {\"turn\": 1,"
+                    + " \"step\": 2, \"message\": {\"role\": \"assistant\", \"content\":"
+                    + " [{\"type\": \"reasoning\", \"text\": \"thinking\"},"
+                    + " {\"type\": \"text\", \"text\": \"final answer here\"}],"
+                    + " \"source\": {\"kind\": \"model\", \"provider\": \"zai\", \"model\": \"glm-5.1\"}}}}"
     );
 
     @Test
@@ -79,7 +90,10 @@ class DshSessionLogReaderTest {
         for (byte[] c : chunks) total += c.length;
         byte[] out = new byte[total];
         int pos = 0;
-        for (byte[] c : chunks) { System.arraycopy(c, 0, out, pos, c.length); pos += c.length; }
+        for (byte[] c : chunks) {
+            System.arraycopy(c, 0, out, pos, c.length);
+            pos += c.length;
+        }
         return out;
     }
 

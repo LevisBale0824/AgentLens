@@ -12,7 +12,8 @@ public final class JsonlRunStore {
 
     public JsonlRunStore(Path file) throws IOException {
         this.file = file;
-        if (file.getParent() != null) Files.createDirectories(file.getParent());
+        Path parent = file.getParent();
+        if (parent != null) Files.createDirectories(parent);
     }
 
     public synchronized void append(AgentRun run) throws IOException {

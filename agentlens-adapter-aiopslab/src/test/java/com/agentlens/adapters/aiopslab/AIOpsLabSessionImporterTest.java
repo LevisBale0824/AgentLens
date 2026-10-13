@@ -4,7 +4,6 @@ import com.agentlens.core.AgentEvent;
 import com.agentlens.core.AgentRun;
 import com.agentlens.core.EventType;
 import com.agentlens.core.RunStatus;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** ROADMAP P2-2: AIOpsLab session JSON → unified trace mapping. */
 class AIOpsLabSessionImporterTest {

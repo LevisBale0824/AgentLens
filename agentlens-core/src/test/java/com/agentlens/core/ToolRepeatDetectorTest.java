@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /** ROADMAP 7.2: callId-aware distinction of retries, no-progress repeats and parallel calls. */
 class ToolRepeatDetectorTest {

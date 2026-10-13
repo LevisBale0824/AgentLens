@@ -62,7 +62,8 @@ public final class ReportGenerator {
         runTimelines(html, data);
 
         html.append("</body></html>");
-        if (outFile.getParent() != null) Files.createDirectories(outFile.getParent());
+        Path parent = outFile.getParent();
+        if (parent != null) Files.createDirectories(parent);
         Files.writeString(outFile, html.toString());
         return outFile;
     }

@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计）。**P2-3 OTLP 导出阶段一已落地**（`OtelSpanMapper` Event→Span 确定性映射 + `OtlpExporter` OTLP/JSON `--otel-endpoint/--otel-out`，重试+fail-open，mock 冒烟验证结构；collector 对接实测待环境）。**P2-4 迷你 Web Dashboard 已落地**（`serve` 命令，运行筛选/趋势/trace+诊断详情/版本对比，见 ROADMAP 7.6）。**P2-5 配置校验 + 结构化日志已落地**（fail-fast 校验 + `--log-json` 请求 ID NDJSON，见 ROADMAP 7.7）。**剩余重点：SpotBugs/Checkstyle、AIOpsLab 集群实测 + K8sGPT、collector 对接实测、DeepEval/Ragas 指标接入、judge 标定、--repeats>=2 真机 pass^k。**
+> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计）。**P2-3 OTLP 导出阶段一已落地**（`OtelSpanMapper` Event→Span 确定性映射 + `OtlpExporter` OTLP/JSON `--otel-endpoint/--otel-out`，重试+fail-open，mock 冒烟验证结构；collector 对接实测待环境）。**P2-4 迷你 Web Dashboard 已落地**（`serve` 命令，运行筛选/趋势/trace+诊断详情/版本对比，见 ROADMAP 7.6）。**P2-5 配置校验 + 结构化日志 + SpotBugs/Checkstyle 门禁已落地**（fail-fast 校验 + `--log-json` 请求 ID NDJSON + `mvn -Pquality verify` 双静态分析门禁接入 CI，见 ROADMAP 7.7）。**剩余重点：AIOpsLab 集群实测 + K8sGPT、collector 对接实测、DeepEval/Ragas 指标接入、judge 标定、--repeats>=2 真机 pass^k。**
 
 ## 优先级定义
 
@@ -240,7 +240,10 @@ P2 LLM Judge / Web UI / 外部集成
 - ✅ 结构化日志 + 请求 ID（`--log-json`）：每次调用生成 `req-` 请求 ID（始终回显），
   stderr NDJSON（ts/level/event/requestId/kv），覆盖 cli.start/end、run.completed、
   gate.verdict、dashboard.start、otel.export_failed、run.persist_failed；默认输出不变。
-- ⬜ SpotBugs / Checkstyle 静态检查接入 Maven 与 CI。
+- ✅ SpotBugs / Checkstyle 静态检查接入 Maven 与 CI（ROADMAP 7.7）：`mvn -Pquality verify`
+  双门禁（Checkstyle 极简规则集 + SpotBugs effort=Max/threshold=Medium，全模块 0 违规 0 bug；
+  修掉 52 处风格违规与 43 处真实缺陷——JDBC 资源泄漏、平台默认编码、Path.getFileName 空指针、
+  min∘max 死代码等），CI 新增 quality 作业先行把关。
 - ⬜ 日志级别过滤与文件输出（可选）。
 
 ## 当前最应该做的 5 件事

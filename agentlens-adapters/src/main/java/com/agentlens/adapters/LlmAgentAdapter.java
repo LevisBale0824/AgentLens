@@ -1,6 +1,11 @@
 package com.agentlens.adapters;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentAdapter;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.EventType;
+import com.agentlens.core.RunStatus;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -8,7 +13,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Real-LLM agent adapter (ROADMAP V1.1): drives an OpenAI-compatible chat

@@ -1,6 +1,10 @@
 package com.agentlens.adapters;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.EventType;
+import com.agentlens.core.RunStatus;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,7 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the tool-calling loop against a fake OpenAI-compatible endpoint:

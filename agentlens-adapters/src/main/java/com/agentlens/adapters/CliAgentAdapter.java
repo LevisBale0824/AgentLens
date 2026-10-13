@@ -1,8 +1,14 @@
 package com.agentlens.adapters;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentAdapter;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.EventType;
+import com.agentlens.core.RunStatus;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -32,11 +38,14 @@ public final class CliAgentAdapter implements AgentAdapter {
         Instant started = Instant.now();
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            process.getOutputStream().write((task.instruction() + System.lineSeparator()).getBytes());
+            process.getOutputStream().write((task.instruction() + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
             process.getOutputStream().close();
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (!finished) { process.destroyForcibly(); return runFailed(task, started, RunStatus.TIMEOUT, "CLI timeout"); }
-            String output = new String(process.getInputStream().readAllBytes());
+            if (!finished) {
+                process.destroyForcibly();
+                return runFailed(task, started, RunStatus.TIMEOUT, "CLI timeout");
+            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             boolean success = process.exitValue() == 0;
             return new AgentRun(UUID.randomUUID().toString(), task.id(), success ? RunStatus.SUCCESS : RunStatus.FAILED,
                     success ? output : null,

@@ -1,6 +1,11 @@
 package com.agentlens.adapters;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentAdapter;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.EventType;
+import com.agentlens.core.RunStatus;
 
 import java.net.URI;
 import java.net.http.HttpClient;

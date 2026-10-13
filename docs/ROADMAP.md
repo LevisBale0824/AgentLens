@@ -487,6 +487,14 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
   `JsonLog` 永不抛异常(日志故障不破坏命令)。
 - 测试:9 个校验规则单测 + 5 个日志形状单测(行结构/kv/截断容错/no-op);真机冒烟验证
   同一 requestId 贯穿 cli.start → run.completed → gate.verdict → cli.end。
+- **静态分析门禁(Checkstyle + SpotBugs)**:`mvn -Pquality verify` 一键双检(CI quality
+  作业先行把关,再进 build 作业)。Checkstyle 采用极简规则集(build/checkstyle.xml:星号/
+  无用导入、tab、行尾空白、空 catch、一行多语句、200 行宽——不做格式化教条);SpotBugs
+  effort=Max + threshold=Medium。落地时清零:52 处风格违规(星号导入/一行多句/超长行等)
+  + 43 处真实缺陷(JDBC Statement/ResultSet 泄漏 18、进程流默认编码 3、Path.getFileName
+  空指针链 8、min∘max 死代码 1、可变状态泄漏 6、静默吞异常 2 等),仅 1 处确证的误报
+  (ExperimentRunner 注入协作对象)进 build/spotbugs-exclude.xml 并注明理由。
+  全程 192 测试保持绿,行为无回归。
 
 ## 8. 长期 Roadmap
 

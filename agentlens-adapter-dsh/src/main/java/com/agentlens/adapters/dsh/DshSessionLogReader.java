@@ -31,7 +31,8 @@ public final class DshSessionLogReader {
     /** Reads all decodable events from {@code session.jsonl} or {@code session.jsonl.zstd}. */
     public static List<JsonNode> read(Path file) throws IOException {
         byte[] bytes = Files.readAllBytes(file);
-        String name = file.getFileName().toString();
+        Path fileName = file.getFileName();
+        String name = fileName == null ? "" : fileName.toString();
         String text = name.endsWith(".zstd") ? decodeZstdContainer(bytes) : new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
         List<JsonNode> events = new ArrayList<>();
         for (String line : text.split("\n")) {

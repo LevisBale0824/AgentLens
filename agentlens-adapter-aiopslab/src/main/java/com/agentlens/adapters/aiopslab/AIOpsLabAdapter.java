@@ -82,7 +82,7 @@ public final class AIOpsLabAdapter implements AgentAdapter {
                     while ((n = process.getInputStream().read(buffer)) > 0) {
                         synchronized (output) {
                             if (output.length() < 16_000) {
-                                output.append(new String(buffer, 0, n));
+                                output.append(new String(buffer, 0, n, java.nio.charset.StandardCharsets.UTF_8));
                             }
                         }
                     }

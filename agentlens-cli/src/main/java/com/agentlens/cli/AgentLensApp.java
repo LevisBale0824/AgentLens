@@ -39,7 +39,11 @@ public final class AgentLensApp {
     private static ExperimentRunner withSqlite(ExperimentRunner runner, String dbPath) throws Exception {
         var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(dbPath));
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { sqlite.close(); } catch (Exception ignored) {}
+            try {
+                sqlite.close();
+            } catch (Exception e) {
+                System.err.println("warning: failed to close sqlite store: " + e);
+            }
         }));
         return runner.onRunCompleted((run, evaluation) -> {
             try {
@@ -70,7 +74,8 @@ public final class AgentLensApp {
         if (!hasEndpoint && !hasOut) return null;
         var json = new com.fasterxml.jackson.databind.ObjectMapper();
         Path file = hasOut ? Path.of(out) : null;
-        if (file != null && file.getParent() != null) java.nio.file.Files.createDirectories(file.getParent());
+        Path fileParent = file == null ? null : file.getParent();
+        if (fileParent != null) java.nio.file.Files.createDirectories(fileParent);
         var exporter = hasEndpoint ? new com.agentlens.eval.OtlpExporter(
                 java.net.URI.create(endpoint),
                 java.time.Duration.ofSeconds(requireInt(opts, "otel-timeout-sec", 10)), 2) : null;
@@ -225,7 +230,8 @@ public final class AgentLensApp {
         var scenarios = problems.stream()
                 .map(com.agentlens.adapters.aiopslab.AIOpsLabProblemCatalog::toScenario).toList();
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-        if (out.getParent() != null) java.nio.file.Files.createDirectories(out.getParent());
+        Path parent = out.getParent();
+        if (parent != null) java.nio.file.Files.createDirectories(parent);
         mapper.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), scenarios);
         System.out.printf("aiopslab catalog: %d problems -> %s%n", scenarios.size(), out.toAbsolutePath());
         problems.stream()
@@ -380,7 +386,11 @@ public final class AgentLensApp {
                 case "aiopslab-catalog" -> aiopslabCatalog(opts);
                 default -> {
                     System.err.println("unknown command: " + command);
-                    System.err.println("usage: run [...] | compare --baseline B --candidate B [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID | report [--db PATH] [--out PATH] | serve [--port N] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
+                    System.err.println("usage: run [...] | compare --baseline B --candidate B"
+                            + " [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID"
+                            + " | report [--db PATH] [--out PATH] | serve [--port N] | import --session PATH"
+                            + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
+                            + " [--out PATH] | demo");
                     System.exit(2);
                 }
             }
@@ -544,7 +554,11 @@ public final class AgentLensApp {
         int port = requireInt(opts, "port", 8080);
         var sqlite = new com.agentlens.eval.SqliteRunStore(db);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { sqlite.close(); } catch (Exception ignored) {}
+            try {
+                sqlite.close();
+            } catch (Exception e) {
+                System.err.println("warning: failed to close sqlite store: " + e);
+            }
         }));
         var dashboard = new DashboardServer(sqlite, port);
         System.out.printf("dashboard: %s  (db=%s) - Ctrl+C to stop%n",

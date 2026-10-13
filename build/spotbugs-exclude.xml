@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs exclusions for AgentLens. Each entry is a proven false positive,
+  scoped to a single class + bug type.
+
+  - ExperimentRunner EI_EXPOSE_REP2: the runner's JsonlRunStore constructor
+    parameter is a dependency-injected collaborator, not internal state.
+    ExperimentRunner must write run summaries into the caller's store, so a
+    defensive copy is impossible (JsonlRunStore wraps a live file) and would
+    change behavior. The field is private and never returned to callers.
+-->
+<FindBugsFilter>
+  <Match>
+    <Class name="com.agentlens.eval.ExperimentRunner"/>
+    <Bug pattern="EI_EXPOSE_REP2"/>
+  </Match>
+</FindBugsFilter>

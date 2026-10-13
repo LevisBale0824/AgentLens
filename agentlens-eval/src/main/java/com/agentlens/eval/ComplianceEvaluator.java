@@ -1,10 +1,14 @@
 package com.agentlens.eval;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentEvent;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.ComplianceVerdict;
+import com.agentlens.core.EventType;
+import com.agentlens.core.EvaluationResult;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -121,7 +125,7 @@ public final class ComplianceEvaluator implements Evaluator {
         long notVerifiable = verdicts.stream().filter(v -> v.status() == ComplianceVerdict.Status.NOT_VERIFIABLE).count();
 
         double score = Math.max(0.6, 1.0 - 0.08 * light);
-        if (soft > 0) score = Math.min(score, 0.49);
+        if (soft > 0 && score > 0.49) score = 0.49;
         if (hard > 0) score = 0.0;
         boolean passed = hard == 0 && soft == 0;
 

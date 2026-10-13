@@ -96,7 +96,7 @@ public final class DshAgentAdapter implements AgentAdapter {
                     int n;
                     while ((n = process.getInputStream().read(buffer)) > 0) {
                         if (outputTail.length() < 20_000)
-                            outputTail.append(new String(buffer, 0, n));
+                            outputTail.append(new String(buffer, 0, n, java.nio.charset.StandardCharsets.UTF_8));
                     }
                 } catch (IOException ignored) {}
             });
@@ -151,7 +151,10 @@ public final class DshAgentAdapter implements AgentAdapter {
         while (System.currentTimeMillis() < deadline) {
             try {
                 var found = findSessionLog(dshHome(task.context()), startMillis, workdirOf(task));
-                if (found.isPresent()) { log = found.get(); break; }
+                if (found.isPresent()) {
+                    log = found.get();
+                    break;
+                }
             } catch (IOException ignored) {}
             Thread.sleep(500);
         }
@@ -249,7 +252,8 @@ public final class DshAgentAdapter implements AgentAdapter {
     /** True if some directory between the log file and {@code sessionsRoot} encodes the cwd token. */
     static boolean underCwdDirectory(Path log, Path sessionsRoot, String token) {
         for (Path dir = log.getParent(); dir != null && dir.startsWith(sessionsRoot); dir = dir.getParent()) {
-            if (dir.getFileName() != null && normalizeDashes(dir.getFileName().toString()).contains(token)) {
+            Path name = dir.getFileName();
+            if (name != null && normalizeDashes(name.toString()).contains(token)) {
                 return true;
             }
         }

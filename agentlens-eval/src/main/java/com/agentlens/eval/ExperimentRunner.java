@@ -1,6 +1,11 @@
 package com.agentlens.eval;
 
-import com.agentlens.core.*;
+import com.agentlens.core.AgentAdapter;
+import com.agentlens.core.AgentRun;
+import com.agentlens.core.AgentTask;
+import com.agentlens.core.EvaluationResult;
+import com.agentlens.core.EvaluationRun;
+import com.agentlens.core.TraceValidator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -23,7 +28,9 @@ public final class ExperimentRunner {
 
     public ExperimentRunner(AgentAdapter adapter, EvaluatorRegistry evaluators, JsonlRunStore store,
                             int concurrency, long timeoutMs) {
-        this.adapter = adapter; this.evaluators = evaluators; this.store = store;
+        this.adapter = adapter;
+        this.evaluators = evaluators;
+        this.store = store;
         this.concurrency = Math.max(1, concurrency);
         this.timeoutMs = timeoutMs;
     }
@@ -146,6 +153,11 @@ public final class ExperimentRunner {
                              long totalResults, long totalTokens, long maxDurationMs) {}
 
     public record BatchResult(List<EvaluationRun> runs, List<TaskFailure> failures, BatchStats stats) {
+        public BatchResult {
+            runs = List.copyOf(runs);
+            failures = List.copyOf(failures);
+        }
+
         public boolean allSucceeded() { return failures.isEmpty(); }
     }
 }

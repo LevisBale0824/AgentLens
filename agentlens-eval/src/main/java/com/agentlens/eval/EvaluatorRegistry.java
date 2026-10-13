@@ -10,7 +10,10 @@ import java.util.List;
 public final class EvaluatorRegistry {
     private final List<Evaluator> evaluators = new ArrayList<>();
 
-    public EvaluatorRegistry register(Evaluator evaluator) { evaluators.add(evaluator); return this; }
+    public EvaluatorRegistry register(Evaluator evaluator) {
+        evaluators.add(evaluator);
+        return this;
+    }
 
     public List<EvaluationResult> evaluate(AgentTask task, AgentRun run) {
         return evaluators.stream().map(e -> e.evaluate(task, run)).toList();

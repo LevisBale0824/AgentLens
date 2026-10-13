@@ -15,6 +15,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -47,9 +48,11 @@ public final class SqliteRunStore implements AutoCloseable {
             } catch (ClassNotFoundException e) {
                 throw new IOException("sqlite-jdbc driver not on classpath", e);
             }
-            if (file.getParent() != null) Files.createDirectories(file.getParent());
+            Path parent = file.getParent();
+            if (parent != null) Files.createDirectories(parent);
             conn = DriverManager.getConnection("jdbc:sqlite:" + file);
-            conn.createStatement().executeUpdate("""
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS runs (
                         run_id TEXT PRIMARY KEY,
                         task_id TEXT NOT NULL,
@@ -61,7 +64,9 @@ public final class SqliteRunStore implements AutoCloseable {
                         total_tokens INTEGER NOT NULL,
                         error TEXT
                     )""");
-            conn.createStatement().executeUpdate("""
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS events (
                         run_id TEXT NOT NULL,
                         seq INTEGER NOT NULL,
@@ -72,7 +77,9 @@ public final class SqliteRunStore implements AutoCloseable {
                         duration_ms INTEGER NOT NULL,
                         PRIMARY KEY (run_id, seq)
                     )""");
-            conn.createStatement().executeUpdate("""
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS evaluations (
                         run_id TEXT PRIMARY KEY,
                         task_id TEXT NOT NULL,
@@ -81,6 +88,7 @@ public final class SqliteRunStore implements AutoCloseable {
                         started_at TEXT NOT NULL,
                         results_json TEXT NOT NULL
                     )""");
+            }
             ensureEvaluationMetadataColumn();
         } catch (SQLException e) {
             throw new IOException("cannot open sqlite run store: " + file, e);
@@ -92,50 +100,60 @@ public final class SqliteRunStore implements AutoCloseable {
      * lack the metadata_json column. ALTER TABLE keeps every existing row intact.
      */
     private void ensureEvaluationMetadataColumn() throws SQLException {
-        ResultSet rs = conn.createStatement().executeQuery("PRAGMA table_info(evaluations)");
         boolean hasMetadata = false;
-        while (rs.next()) {
-            if ("metadata_json".equalsIgnoreCase(rs.getString("name"))) { hasMetadata = true; break; }
+        try (Statement pragma = conn.createStatement();
+             ResultSet rs = pragma.executeQuery("PRAGMA table_info(evaluations)")) {
+            while (rs.next()) {
+                if ("metadata_json".equalsIgnoreCase(rs.getString("name"))) {
+                    hasMetadata = true;
+                    break;
+                }
+            }
         }
-        rs.close();
-        if (!hasMetadata)
-            conn.createStatement().executeUpdate("ALTER TABLE evaluations ADD COLUMN metadata_json TEXT");
+        if (!hasMetadata) {
+            try (Statement alter = conn.createStatement()) {
+                alter.executeUpdate("ALTER TABLE evaluations ADD COLUMN metadata_json TEXT");
+            }
+        }
     }
 
     /** Persists a full run with its trace events. */
     public synchronized void saveRun(AgentRun run, String agentName) throws IOException {
         try {
-            PreparedStatement runStmt = conn.prepareStatement(
-                    "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?)");
-            runStmt.setString(1, run.runId());
-            runStmt.setString(2, run.taskId());
-            runStmt.setString(3, agentName);
-            runStmt.setString(4, run.status().name());
-            runStmt.setString(5, run.finalAnswer());
-            runStmt.setString(6, run.startedAt().toString());
-            runStmt.setLong(7, run.durationMs());
-            runStmt.setLong(8, run.totalTokens());
-            runStmt.setString(9, run.error());
-            runStmt.executeUpdate();
-
-            PreparedStatement delEvents = conn.prepareStatement("DELETE FROM events WHERE run_id = ?");
-            delEvents.setString(1, run.runId());
-            delEvents.executeUpdate();
-
-            PreparedStatement evStmt = conn.prepareStatement("INSERT INTO events VALUES (?,?,?,?,?,?,?)");
-            List<AgentEvent> events = run.events();
-            for (int i = 0; i < events.size(); i++) {
-                AgentEvent e = events.get(i);
-                evStmt.setString(1, run.runId());
-                evStmt.setInt(2, i);
-                evStmt.setString(3, e.type().name());
-                evStmt.setString(4, e.name());
-                evStmt.setString(5, mapper.writeValueAsString(e.attributes()));
-                evStmt.setString(6, e.timestamp().toString());
-                evStmt.setLong(7, e.durationMs());
-                evStmt.addBatch();
+            try (PreparedStatement runStmt = conn.prepareStatement(
+                    "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?)")) {
+                runStmt.setString(1, run.runId());
+                runStmt.setString(2, run.taskId());
+                runStmt.setString(3, agentName);
+                runStmt.setString(4, run.status().name());
+                runStmt.setString(5, run.finalAnswer());
+                runStmt.setString(6, run.startedAt().toString());
+                runStmt.setLong(7, run.durationMs());
+                runStmt.setLong(8, run.totalTokens());
+                runStmt.setString(9, run.error());
+                runStmt.executeUpdate();
             }
-            evStmt.executeBatch();
+
+            try (PreparedStatement delEvents = conn.prepareStatement("DELETE FROM events WHERE run_id = ?")) {
+                delEvents.setString(1, run.runId());
+                delEvents.executeUpdate();
+            }
+
+            List<AgentEvent> events = run.events();
+            try (PreparedStatement evStmt = conn.prepareStatement("INSERT INTO events VALUES (?,?,?,?,?,?,?)")) {
+                for (int i = 0; i < events.size(); i++) {
+                    AgentEvent e = events.get(i);
+                    evStmt.setString(1, run.runId());
+                    evStmt.setInt(2, i);
+                    evStmt.setString(3, e.type().name());
+                    evStmt.setString(4, e.name());
+                    evStmt.setString(5, mapper.writeValueAsString(e.attributes()));
+                    evStmt.setString(6, e.timestamp().toString());
+                    evStmt.setLong(7, e.durationMs());
+                    evStmt.addBatch();
+                }
+                evStmt.executeBatch();
+            }
         } catch (SQLException e) {
             throw new IOException("failed to save run " + run.runId(), e);
         }
@@ -144,19 +162,20 @@ public final class SqliteRunStore implements AutoCloseable {
     /** Persists the evaluation outcome (results + audit metadata) attached to a run. */
     public synchronized void saveEvaluation(EvaluationRun evaluation) throws IOException {
         try {
-            PreparedStatement stmt = conn.prepareStatement("""
+            try (PreparedStatement stmt = conn.prepareStatement("""
                     INSERT OR REPLACE INTO evaluations
                         (run_id, task_id, agent, agent_version, started_at, results_json, metadata_json)
-                    VALUES (?,?,?,?,?,?,?)""");
-            stmt.setString(1, evaluation.id());
-            stmt.setString(2, evaluation.taskId());
-            stmt.setString(3, evaluation.agentName());
-            stmt.setString(4, evaluation.agentVersion());
-            stmt.setString(5, evaluation.startedAt().toString());
-            stmt.setString(6, mapper.writeValueAsString(evaluation.results()));
-            stmt.setString(7, evaluation.metadata().isEmpty()
-                    ? null : mapper.writeValueAsString(evaluation.metadata()));
-            stmt.executeUpdate();
+                    VALUES (?,?,?,?,?,?,?)""")) {
+                stmt.setString(1, evaluation.id());
+                stmt.setString(2, evaluation.taskId());
+                stmt.setString(3, evaluation.agentName());
+                stmt.setString(4, evaluation.agentVersion());
+                stmt.setString(5, evaluation.startedAt().toString());
+                stmt.setString(6, mapper.writeValueAsString(evaluation.results()));
+                stmt.setString(7, evaluation.metadata().isEmpty()
+                        ? null : mapper.writeValueAsString(evaluation.metadata()));
+                stmt.executeUpdate();
+            }
         } catch (SQLException e) {
             throw new IOException("failed to save evaluation " + evaluation.id(), e);
         }
@@ -165,16 +184,18 @@ public final class SqliteRunStore implements AutoCloseable {
     /** Restores a full run (trace events included) by run id. */
     public Optional<AgentRun> loadRun(String runId) throws IOException {
         try {
-            PreparedStatement stmt = conn.prepareStatement("SELECT * FROM runs WHERE run_id = ?");
-            stmt.setString(1, runId);
-            ResultSet rs = stmt.executeQuery();
-            if (!rs.next()) return Optional.empty();
-            AgentRun run = new AgentRun(
-                    rs.getString("run_id"), rs.getString("task_id"),
-                    RunStatus.valueOf(rs.getString("status")), rs.getString("final_answer"),
-                    loadEvents(runId), Instant.parse(rs.getString("started_at")),
-                    rs.getLong("duration_ms"), (int) rs.getLong("total_tokens"), rs.getString("error"));
-            return Optional.of(run);
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT * FROM runs WHERE run_id = ?")) {
+                stmt.setString(1, runId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next()) return Optional.empty();
+                    AgentRun run = new AgentRun(
+                            rs.getString("run_id"), rs.getString("task_id"),
+                            RunStatus.valueOf(rs.getString("status")), rs.getString("final_answer"),
+                            loadEvents(runId), Instant.parse(rs.getString("started_at")),
+                            rs.getLong("duration_ms"), (int) rs.getLong("total_tokens"), rs.getString("error"));
+                    return Optional.of(run);
+                }
+            }
         } catch (SQLException e) {
             throw new IOException("failed to load run " + runId, e);
         }
@@ -184,21 +205,23 @@ public final class SqliteRunStore implements AutoCloseable {
     @SuppressWarnings("unchecked")
     public Optional<EvaluationRun> loadEvaluation(String runId) throws IOException {
         try {
-            PreparedStatement stmt = conn.prepareStatement("SELECT * FROM evaluations WHERE run_id = ?");
-            stmt.setString(1, runId);
-            ResultSet rs = stmt.executeQuery();
-            if (!rs.next()) return Optional.empty();
-            List<com.agentlens.core.EvaluationResult> results = mapper.readValue(
-                    rs.getString("results_json"),
-                    mapper.getTypeFactory().constructCollectionType(List.class,
-                            com.agentlens.core.EvaluationResult.class));
-            String metadataJson = rs.getString("metadata_json");
-            Map<String, Object> metadata = metadataJson == null ? Map.of()
-                    : mapper.readValue(metadataJson,
-                            new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
-            return Optional.of(new EvaluationRun(rs.getString("run_id"), rs.getString("task_id"),
-                    rs.getString("agent"), rs.getString("agent_version"),
-                    Instant.parse(rs.getString("started_at")), results, metadata));
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT * FROM evaluations WHERE run_id = ?")) {
+                stmt.setString(1, runId);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (!rs.next()) return Optional.empty();
+                    List<com.agentlens.core.EvaluationResult> results = mapper.readValue(
+                            rs.getString("results_json"),
+                            mapper.getTypeFactory().constructCollectionType(List.class,
+                                    com.agentlens.core.EvaluationResult.class));
+                    String metadataJson = rs.getString("metadata_json");
+                    Map<String, Object> metadata = metadataJson == null ? Map.of()
+                            : mapper.readValue(metadataJson,
+                                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
+                    return Optional.of(new EvaluationRun(rs.getString("run_id"), rs.getString("task_id"),
+                            rs.getString("agent"), rs.getString("agent_version"),
+                            Instant.parse(rs.getString("started_at")), results, metadata));
+                }
+            }
         } catch (SQLException e) {
             throw new IOException("failed to load evaluation " + runId, e);
         }
@@ -207,10 +230,11 @@ public final class SqliteRunStore implements AutoCloseable {
     /** Lists stored run ids newest-first with their task and status. */
     public List<String> listRuns() throws IOException {
         try {
-            ResultSet rs = conn.createStatement().executeQuery(
-                    "SELECT run_id FROM runs ORDER BY started_at DESC");
             List<String> ids = new ArrayList<>();
-            while (rs.next()) ids.add(rs.getString(1));
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT run_id FROM runs ORDER BY started_at DESC")) {
+                while (rs.next()) ids.add(rs.getString(1));
+            }
             return List.copyOf(ids);
         } catch (SQLException e) {
             throw new IOException("failed to list runs", e);
@@ -227,16 +251,18 @@ public final class SqliteRunStore implements AutoCloseable {
     }
 
     private List<AgentEvent> loadEvents(String runId) throws SQLException, IOException {
-        PreparedStatement stmt = conn.prepareStatement(
-                "SELECT * FROM events WHERE run_id = ? ORDER BY seq");
-        stmt.setString(1, runId);
-        ResultSet rs = stmt.executeQuery();
         List<AgentEvent> events = new ArrayList<>();
-        while (rs.next()) {
-            Map<String, Object> attrs = mapper.readValue(rs.getString("attributes_json"),
-                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
-            events.add(new AgentEvent(EventType.valueOf(rs.getString("type")), rs.getString("name"),
-                    attrs, Instant.parse(rs.getString("timestamp")), rs.getLong("duration_ms")));
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "SELECT * FROM events WHERE run_id = ? ORDER BY seq")) {
+            stmt.setString(1, runId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> attrs = mapper.readValue(rs.getString("attributes_json"),
+                            new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
+                    events.add(new AgentEvent(EventType.valueOf(rs.getString("type")), rs.getString("name"),
+                            attrs, Instant.parse(rs.getString("timestamp")), rs.getLong("duration_ms")));
+                }
+            }
         }
         return List.copyOf(events);
     }

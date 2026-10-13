@@ -94,13 +94,19 @@ public final class ToolRepeatDetector {
         OpenCall match = null;
         if (callId != null) {
             for (OpenCall c : openCalls) {
-                if (!c.closed && callId.equals(c.callId)) { match = c; break; }
+                if (!c.closed && callId.equals(c.callId)) {
+                    match = c;
+                    break;
+                }
             }
         }
         if (match == null && event.name() != null) {
             for (int i = openCalls.size() - 1; i >= 0; i--) {
                 OpenCall c = openCalls.get(i);
-                if (!c.closed && event.name().equals(c.tool)) { match = c; break; }
+                if (!c.closed && event.name().equals(c.tool)) {
+                    match = c;
+                    break;
+                }
             }
         }
         if (match == null) return; // result for an unknown call: ignore

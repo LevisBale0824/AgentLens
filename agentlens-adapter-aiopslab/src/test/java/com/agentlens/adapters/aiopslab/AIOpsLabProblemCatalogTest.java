@@ -6,7 +6,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Parses the real microsoft/AIOpsLab problem registry (fixture, MIT). */
 class AIOpsLabProblemCatalogTest {
