@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计）。**P2-3 OTLP 导出阶段一已落地**（`OtelSpanMapper` Event→Span 确定性映射 + `OtlpExporter` OTLP/JSON `--otel-endpoint/--otel-out`，重试+fail-open，mock 冒烟验证结构；collector 对接实测待环境）。**P2-4 迷你 Web Dashboard 已落地**（`serve` 命令，运行筛选/趋势/trace+诊断详情/版本对比，见 ROADMAP 7.6）。**剩余重点：AIOpsLab 集群实测 + K8sGPT、collector 对接实测、DeepEval/Ragas 指标接入、judge 标定、--repeats>=2 真机 pass^k。**
+> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计）。**P2-3 OTLP 导出阶段一已落地**（`OtelSpanMapper` Event→Span 确定性映射 + `OtlpExporter` OTLP/JSON `--otel-endpoint/--otel-out`，重试+fail-open，mock 冒烟验证结构；collector 对接实测待环境）。**P2-4 迷你 Web Dashboard 已落地**（`serve` 命令，运行筛选/趋势/trace+诊断详情/版本对比，见 ROADMAP 7.6）。**P2-5 配置校验 + 结构化日志已落地**（fail-fast 校验 + `--log-json` 请求 ID NDJSON，见 ROADMAP 7.7）。**剩余重点：SpotBugs/Checkstyle、AIOpsLab 集群实测 + K8sGPT、collector 对接实测、DeepEval/Ragas 指标接入、judge 标定、--repeats>=2 真机 pass^k。**
 
 ## 优先级定义
 
@@ -230,13 +230,18 @@ P2 LLM Judge / Web UI / 外部集成
 
 ### P2-5：增加工程质量保障
 
-- JUnit 单元测试。
-- Adapter 集成测试。
-- Docker Compose。
-- GitHub Actions。
-- SpotBugs / Checkstyle。
-- 运行时配置校验。
-- 结构化日志和请求 ID。
+- ✅ JUnit 单元测试（190+，26+ 测试类）。
+- ✅ Adapter 集成测试。
+- ✅ Docker Compose / GitHub Actions。
+- ✅ 运行时配置校验（ROADMAP 7.7）：`validate()` 命令分发前 fail-fast——场景文件存在性、
+  repeats≥1、端口 1-65535、`--adapter` 名 SPI 可解析（报错附可用列表）、otel/judge URL 必须
+  http(s)、show/report 数据库存在性；数值 flag 严格解析（`--repeats abc` 报 config error
+  而非静默回落默认值）。
+- ✅ 结构化日志 + 请求 ID（`--log-json`）：每次调用生成 `req-` 请求 ID（始终回显），
+  stderr NDJSON（ts/level/event/requestId/kv），覆盖 cli.start/end、run.completed、
+  gate.verdict、dashboard.start、otel.export_failed、run.persist_failed；默认输出不变。
+- ⬜ SpotBugs / Checkstyle 静态检查接入 Maven 与 CI。
+- ⬜ 日志级别过滤与文件输出（可选）。
 
 ## 当前最应该做的 5 件事
 

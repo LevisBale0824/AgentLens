@@ -84,6 +84,9 @@ AgentLensApp import --session PATH/TO/session.jsonl.zstd --judge --judge-ollama
 # OTLP 轨迹导出（P2-3 阶段一，可选，fail-open）：--otel-out 落 NDJSON 文件，--otel-endpoint 推 OTLP/HTTP collector
 AgentLensApp run --scenarios PATH --otel-out output/traces.ndjson
 AgentLensApp compare --adapter dsh --candidate-override "dshArgs=--model m" --otel-endpoint http://localhost:4318/v1/traces
+
+# 结构化日志（P2-5，可选）：--log-json 使 stderr 输出 NDJSON（含每次调用的 req- 请求 ID，始终回显）
+AgentLensApp run --scenarios PATH --log-json
 ```
 
 ## 插件化适配器

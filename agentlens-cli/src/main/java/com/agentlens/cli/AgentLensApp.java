@@ -46,8 +46,12 @@ public final class AgentLensApp {
                 sqlite.saveRun(run, evaluation.agentName());
                 sqlite.saveEvaluation(evaluation);
             } catch (Exception e) {
+                log.event("error", "run.persist_failed", "runId", run.runId(),
+                        "taskId", run.taskId(), "error", String.valueOf(e));
                 throw new IllegalStateException("sqlite persistence failed for " + run.runId(), e);
             }
+            log.event("info", "run.completed", "runId", run.runId(), "taskId", run.taskId(),
+                    "status", run.status(), "durationMs", run.durationMs());
         });
     }
 
@@ -69,7 +73,7 @@ public final class AgentLensApp {
         if (file != null && file.getParent() != null) java.nio.file.Files.createDirectories(file.getParent());
         var exporter = hasEndpoint ? new com.agentlens.eval.OtlpExporter(
                 java.net.URI.create(endpoint),
-                java.time.Duration.ofSeconds(intOf(opts.get("otel-timeout-sec"), 10)), 2) : null;
+                java.time.Duration.ofSeconds(requireInt(opts, "otel-timeout-sec", 10)), 2) : null;
         System.out.printf("otel: %s%s%s%n",
                 hasEndpoint ? "endpoint=" + endpoint : "",
                 hasEndpoint && hasOut ? " " : "",
@@ -83,6 +87,7 @@ public final class AgentLensApp {
                         java.nio.file.StandardOpenOption.APPEND);
                 if (exporter != null) exporter.export(payload);
             } catch (Exception e) {
+                log.event("warn", "otel.export_failed", "error", String.valueOf(e));
                 System.err.println("otel export failed (fail-open): " + e);
             }
         };
@@ -198,6 +203,8 @@ public final class AgentLensApp {
                     "aiopslab", "imported", run.startedAt(), results,
                     Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens(),
                             "problemId", String.valueOf(imported.problemId()))));
+            log.event("info", "run.completed", "runId", run.runId(), "taskId", run.taskId(),
+                    "status", run.status(), "durationMs", run.durationMs(), "source", "aiopslab");
         }
         System.out.printf("  persisted run %s (adapter=aiopslab, version=imported)%n", run.runId());
         java.util.function.Consumer<AgentRun> aiopslabOtel = otelSink(opts);
@@ -244,7 +251,7 @@ public final class AgentLensApp {
     private static void dshLiveRun(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
                                    List<Scenario> scenarios, Map<String, String> opts) throws Exception {
         boolean abort = "true".equalsIgnoreCase(opts.getOrDefault("abort-on-violation", "false"));
-        int repeats = intOf(opts.get("repeats"), 1);
+        int repeats = requireInt(opts, "repeats", 1);
         int passed = 0, failed = 0, aborted = 0;
 
         var registry = new EvaluatorRegistry()
@@ -292,6 +299,8 @@ public final class AgentLensApp {
                         sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), task.id(),
                                 dsh.name(), "dev", run.startedAt(), results,
                                 Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens())));
+                        log.event("info", "run.completed", "runId", run.runId(), "taskId", task.id(),
+                                "status", run.status(), "durationMs", run.durationMs(), "source", "dsh");
                     } catch (Exception e) {
                         throw new IllegalStateException("sqlite persistence failed for " + run.runId(), e);
                     }
@@ -306,6 +315,7 @@ public final class AgentLensApp {
         printPassKSummary(summary);
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(summary);
         System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
+        logGate("dsh-live", gate);
         if (!gate.passed() || failed > 0 || aborted > 0) System.exit(1);
     }
 
@@ -344,30 +354,131 @@ public final class AgentLensApp {
         }
     }
 
+    /** Structured logger (active only with --log-json); request id always present. */
+    private static JsonLog log = JsonLog.disabled();
+
     public static void main(String[] args) throws Exception {
         String command = args.length > 0 && !args[0].startsWith("--") ? args[0] : "run";
         Map<String, String> opts = parseOptions(args, command);
-        switch (command) {
-            case "run" -> run(opts);
-            case "compare" -> compare(opts);
-            case "import" -> importSession(opts);
-            case "show" -> show(opts);
-            case "report" -> report(opts);
-            case "demo" -> demo(opts);
-            case "serve" -> serve(opts);
-            case "aiopslab-catalog" -> aiopslabCatalog(opts);
-            default -> {
-                System.err.println("unknown command: " + command);
-                System.err.println("usage: run [...] | compare --baseline B --candidate B [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID | report [--db PATH] [--out PATH] | serve [--port N] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
-                System.exit(2);
+        // ROADMAP P2-5: every invocation gets a request id; stderr goes structured NDJSON
+        // with --log-json, otherwise the request id is still echoed for correlation.
+        log = opts.containsKey("log-json")
+                ? JsonLog.to(System.err, JsonLog.newRequestId())
+                : JsonLog.to(null, JsonLog.newRequestId());
+        System.out.printf("request-id: %s%n", log.requestId());
+        log.event("info", "cli.start", "command", command);
+        try {
+            validate(command, opts);
+            switch (command) {
+                case "run" -> run(opts);
+                case "compare" -> compare(opts);
+                case "import" -> importSession(opts);
+                case "show" -> show(opts);
+                case "report" -> report(opts);
+                case "demo" -> demo(opts);
+                case "serve" -> serve(opts);
+                case "aiopslab-catalog" -> aiopslabCatalog(opts);
+                default -> {
+                    System.err.println("unknown command: " + command);
+                    System.err.println("usage: run [...] | compare --baseline B --candidate B [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID | report [--db PATH] [--out PATH] | serve [--port N] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
+                    System.exit(2);
+                }
             }
+            log.event("info", "cli.end", "command", command);
+        } catch (ConfigException e) {
+            log.event("error", "cli.config_error", "command", command, "message", e.getMessage());
+            System.err.println("config error: " + e.getMessage());
+            System.exit(2);
+        }
+    }
+
+    /**
+     * ROADMAP P2-5: runtime configuration validation - fail fast with actionable
+     * messages before any scenario or session starts (package-private for tests).
+     */
+    static void validate(String command, Map<String, String> opts) {
+        switch (command) {
+            case "run", "compare" -> {
+                Path scenarios = Path.of(opts.getOrDefault("scenarios", DEFAULT_SCENARIOS));
+                if (!java.nio.file.Files.isRegularFile(scenarios))
+                    throw new ConfigException("scenarios file not found: " + scenarios.toAbsolutePath());
+                int repeats = requireInt(opts, "repeats", 1);
+                if (repeats < 1) throw new ConfigException("repeats must be >= 1, got: " + repeats);
+                validateAdapter(opts.get("adapter"));
+                validateOtel(opts);
+                validateJudge(opts);
+            }
+            case "serve" -> {
+                int port = requireInt(opts, "port", 8080);
+                if (port < 1 || port > 65535)
+                    throw new ConfigException("port must be within 1-65535, got: " + port);
+            }
+            case "show", "report" -> {
+                String db = opts.get("db");
+                if (db != null && !java.nio.file.Files.isRegularFile(Path.of(db)))
+                    throw new ConfigException("database not found (run something first): " + db);
+            }
+            case "import" -> {
+                validateOtel(opts);
+                validateJudge(opts);
+            }
+            case "demo", "aiopslab-catalog" -> { }
+            default -> { } // unknown command is reported by the dispatcher
+        }
+    }
+
+    private static void validateAdapter(String adapterName) {
+        if (adapterName == null || adapterName.isBlank() || adapterName.equals("llm")) return;
+        try {
+            AdapterRegistry.load().get(adapterName);
+        } catch (RuntimeException e) {
+            throw new ConfigException(e.getMessage());
+        }
+    }
+
+    private static void validateOtel(Map<String, String> opts) {
+        String endpoint = opts.get("otel-endpoint");
+        if (endpoint != null && !endpoint.isBlank()) {
+            try {
+                java.net.URI uri = java.net.URI.create(endpoint);
+                String scheme = uri.getScheme();
+                if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))
+                    throw new IllegalArgumentException("scheme must be http/https");
+            } catch (RuntimeException e) {
+                throw new ConfigException("otel-endpoint must be an http(s) URL, got: " + endpoint);
+            }
+        }
+        int otelTimeout = requireInt(opts, "otel-timeout-sec", 10);
+        if (otelTimeout < 1) throw new ConfigException("otel-timeout-sec must be >= 1, got: " + otelTimeout);
+    }
+
+    private static void validateJudge(Map<String, String> opts) {
+        String url = opts.getOrDefault("judge-url", System.getenv("AGENTLENS_JUDGE_URL"));
+        if (url == null || url.isBlank()) return;
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme()))
+                throw new IllegalArgumentException("scheme must be http/https");
+        } catch (RuntimeException e) {
+            throw new ConfigException("judge-url must be an http(s) URL, got: " + url);
+        }
+    }
+
+    /** Strict int option: absent -> default; garbage or out of contract -> ConfigException. */
+    static int requireInt(Map<String, String> opts, String key, int defaultVal) {
+        String v = opts.get(key);
+        if (v == null || v.isBlank()) return defaultVal;
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            throw new ConfigException(key + " must be an integer, got: " + v);
         }
     }
 
     /** Loads the scenario dataset, runs it with the mock agent, aggregates pass^k and gates. */
     private static void run(Map<String, String> opts) throws Exception {
         Path scenariosPath = Path.of(opts.getOrDefault("scenarios", DEFAULT_SCENARIOS));
-        int repeats = intOf(opts.get("repeats"), 1);
+        int repeats = requireInt(opts, "repeats", 1);
         Set<String> extraForbidden = csv(opts.get("forbidden"));
         Set<String> extraAllowed = csv(opts.get("allowed"));
 
@@ -417,6 +528,7 @@ public final class AgentLensApp {
 
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(PassK.summarize(byTask));
         System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
+        logGate("run", gate);
         if (!gate.passed()) System.exit(1);
     }
 
@@ -429,7 +541,7 @@ public final class AgentLensApp {
      */
     private static void serve(Map<String, String> opts) throws Exception {
         Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
-        int port = intOf(opts.get("port"), 8080);
+        int port = requireInt(opts, "port", 8080);
         var sqlite = new com.agentlens.eval.SqliteRunStore(db);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try { sqlite.close(); } catch (Exception ignored) {}
@@ -437,6 +549,8 @@ public final class AgentLensApp {
         var dashboard = new DashboardServer(sqlite, port);
         System.out.printf("dashboard: %s  (db=%s) - Ctrl+C to stop%n",
                 dashboard.baseUrl() + "/", db.toAbsolutePath());
+        log.event("info", "dashboard.start", "url", dashboard.baseUrl() + "/",
+                "db", db.toAbsolutePath().toString());
         new java.util.concurrent.CountDownLatch(1).await();
     }
 
@@ -462,7 +576,7 @@ public final class AgentLensApp {
         Path scenariosPath = Path.of(opts.getOrDefault("scenarios", DEFAULT_SCENARIOS));
         String adapterName = opts.getOrDefault("adapter", "mock");
         // dsh sessions cost real quota: default to a single repeat unless asked otherwise.
-        int repeats = intOf(opts.get("repeats"), "dsh".equals(adapterName) ? 1 : 5);
+        int repeats = requireInt(opts, "repeats", "dsh".equals(adapterName) ? 1 : 5);
         String baselineBehavior = opts.getOrDefault("baseline", "correct");
         String candidateBehavior = opts.getOrDefault("candidate", "flaky");
         Map<String, String> baselineOverrides = parseOverrides(opts.get("baseline-override"));
@@ -507,6 +621,7 @@ public final class AgentLensApp {
 
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).compare(baseSummary, candSummary);
         System.out.printf("%nrelease gate: passed=%s%n  reason=%s%n", gate.passed(), gate.reason());
+        logGate("compare", gate);
         if (!gate.passed()) System.exit(1);
     }
 
@@ -649,7 +764,7 @@ public final class AgentLensApp {
                 java.net.URI.create(opts.getOrDefault("base-url", "http://localhost:11434")),
                 opts.getOrDefault("model", "qwen2.5:7b"),
                 Double.parseDouble(opts.getOrDefault("temperature", "0.4")),
-                java.time.Duration.ofSeconds(intOf(opts.get("timeout"), 300)),
+                java.time.Duration.ofSeconds(requireInt(opts, "timeout", 300)),
                 new com.agentlens.adapters.SimulatedToolExecutor());
     }
 
@@ -676,12 +791,6 @@ public final class AgentLensApp {
             else opts.put(key, args[++i]);
         }
         return opts;
-    }
-
-    private static int intOf(String value, int defaultVal) {
-        if (value == null) return defaultVal;
-        try { return Math.max(1, Integer.parseInt(value)); }
-        catch (NumberFormatException e) { return defaultVal; }
     }
 
     /**
@@ -727,5 +836,11 @@ public final class AgentLensApp {
     private static Set<String> csv(String value) {
         return value == null || value.isBlank() ? Set.of()
                 : Set.of(value.split(","));
+    }
+
+    /** Emits the gate verdict to both console and the structured log. */
+    private static void logGate(String scope, com.agentlens.eval.RegressionGate.GateResult gate) {
+        log.event(gate.passed() ? "info" : "warn", "gate.verdict",
+                "scope", scope, "passed", gate.passed(), "reason", gate.reason());
     }
 }

@@ -473,6 +473,21 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
 - API:`/api/summary`、`/api/runs`、`/api/runs/{id}`、`/api/scenarios`;4 个单测覆盖
   (临时库 + 真实 http 请求断言);真机验证 791 runs / 119 scenarios 全量加载正常。
 
+### 7.7 P2-5: 运行时配置校验 + 结构化日志(已落地)
+
+- **校验(`validate()`)**:命令分发前 fail-fast,全部报 `config error: <可执行建议>` 并以
+  退出码 2 结束:场景文件存在性、repeats>=1、serve 端口 1-65535、`--adapter` 名经 SPI
+  解析(失败附 available 列表)、`--otel-endpoint`/`--judge-url` 必须 http(s) URI、
+  show/report 的数据库存在性。数值 flag 从"解析失败静默回落默认值"改为严格校验
+  (`--repeats abc` 现在报错),杜绝配置笔误被吞掉。
+- **结构化日志(`--log-json`)**:每次调用生成 `req-xxxxxxxx` 请求 ID(人类输出头部始终
+  回显,便于跨流关联);开启后 stderr 输出 NDJSON,每行 ts/level/event/requestId/kv,
+  覆盖 cli.start、cli.end、run.completed(runId/taskId/status/durationMs)、gate.verdict、
+  dashboard.start、otel.export_failed、run.persist_failed。默认人类可读输出不变;
+  `JsonLog` 永不抛异常(日志故障不破坏命令)。
+- 测试:9 个校验规则单测 + 5 个日志形状单测(行结构/kv/截断容错/no-op);真机冒烟验证
+  同一 requestId 贯穿 cli.start → run.completed → gate.verdict → cli.end。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
