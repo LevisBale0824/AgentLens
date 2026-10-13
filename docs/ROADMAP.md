@@ -458,6 +458,21 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
   单测(本地 httpserver 收包/500 重试/连接拒绝 fail-open/非 2xx 判失败)+ mock 冒烟
   NDJSON 结构核验;collector 端到端实测待环境。
 
+### 7.6 P2-4: 迷你 Web Dashboard(已落地)
+
+`AgentLensApp serve [--db PATH] [--port N]`——JDK 内置 HttpServer + 内嵌单页前端
+(原生 JS fetch,零前端构建、零新依赖),只读服务 SQLite run store:
+
+- **运行列表**:按 task 子串 / 状态 / agentVersion 客户端筛选,"仅看失败"开关;
+  列含 started、status pill、评测 PASS/FAIL、版本、实测模型(observedModel)、时长、事件数。
+- **趋势条形图**:按时间排序的逐 run 时长条(绿=过/红=挂,悬停看 task 与状态)。
+- **Scenarios pass^k 分层表**:STABLE_PASS / FLAKY / STABLE_FAIL。
+- **单 run 详情**:完整 trace 时间线(类型/名称/耗时/属性 JSON)、评测逐项、
+  **诊断证据链现算呈现**(DiagnosisEngine 纯函数按 trace 现算,老库无需迁移即可看证据)。
+- **版本对比**:version 下拉 + 每行版本/模型标注,直接支撑 baseline/candidate 目测。
+- API:`/api/summary`、`/api/runs`、`/api/runs/{id}`、`/api/scenarios`;4 个单测覆盖
+  (临时库 + 真实 http 请求断言);真机验证 791 runs / 119 scenarios 全量加载正常。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

@@ -71,6 +71,9 @@ AgentLensApp show --run list          # 列出全部 run ID
 # 自包含 HTML 报告（run 表 / pass^k 分层 / trace 时间线 / 评测结果）
 AgentLensApp report [--db PATH] [--out PATH]
 
+# 迷你 Web Dashboard（P2-4）：本地起服务，运行列表筛选 / 趋势 / trace+诊断详情 / 版本对比
+AgentLensApp serve [--db PATH] [--port N]        # 浏览器打开 http://127.0.0.1:{port}/
+
 # 冒烟测试
 AgentLensApp demo
 

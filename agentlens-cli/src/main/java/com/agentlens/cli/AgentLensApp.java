@@ -354,10 +354,11 @@ public final class AgentLensApp {
             case "show" -> show(opts);
             case "report" -> report(opts);
             case "demo" -> demo(opts);
+            case "serve" -> serve(opts);
             case "aiopslab-catalog" -> aiopslabCatalog(opts);
             default -> {
                 System.err.println("unknown command: " + command);
-                System.err.println("usage: run [...] | compare --baseline B --candidate B [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID | report [--db PATH] [--out PATH] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
+                System.err.println("usage: run [...] | compare --baseline B --candidate B [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID | report [--db PATH] [--out PATH] | serve [--port N] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
                 System.exit(2);
             }
         }
@@ -417,6 +418,26 @@ public final class AgentLensApp {
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(PassK.summarize(byTask));
         System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
         if (!gate.passed()) System.exit(1);
+    }
+
+    /**
+     * ROADMAP P2-4 (mini web dashboard): serves the SQLite run store at
+     * http://127.0.0.1:{port}/ - runs list with filters, pass^k layers, trend
+     * bars, run detail with trace timeline / evaluations / live-computed
+     * diagnosis evidence, and baseline-vs-candidate version compare.
+     * Read-only; Ctrl+C stops the server.
+     */
+    private static void serve(Map<String, String> opts) throws Exception {
+        Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
+        int port = intOf(opts.get("port"), 8080);
+        var sqlite = new com.agentlens.eval.SqliteRunStore(db);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try { sqlite.close(); } catch (Exception ignored) {}
+        }));
+        var dashboard = new DashboardServer(sqlite, port);
+        System.out.printf("dashboard: %s  (db=%s) - Ctrl+C to stop%n",
+                dashboard.baseUrl() + "/", db.toAbsolutePath());
+        new java.util.concurrent.CountDownLatch(1).await();
     }
 
     /**
@@ -646,7 +667,7 @@ public final class AgentLensApp {
         Map<String, String> opts = new java.util.HashMap<>();
         // Skip the command word (args[0]) only when it is one, not when it is a flag.
         int start = args.length > 0 && !args[0].startsWith("--")
-                && List.of("run", "demo", "compare", "show", "report", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
+                && List.of("run", "demo", "compare", "show", "report", "serve", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
         for (int i = start; i < args.length; i++) {
             if (!args[i].startsWith("--")) continue;
             String key = args[i].substring(2);
