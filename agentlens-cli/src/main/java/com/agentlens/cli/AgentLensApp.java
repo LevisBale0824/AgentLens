@@ -51,6 +51,49 @@ public final class AgentLensApp {
         });
     }
 
+    /**
+     * ROADMAP P2-3: optional OTLP sink from CLI flags. {@code --otel-endpoint URL}
+     * posts each run's OTLP/JSON trace to an OTLP/HTTP collector; {@code --otel-out
+     * PATH} appends one JSON line per run (inspectable offline). Both may be combined.
+     * Fail-open: export problems warn on stderr and never fail the evaluation.
+     * Returns null when neither flag is set.
+     */
+    private static java.util.function.Consumer<AgentRun> otelSink(Map<String, String> opts) throws Exception {
+        String endpoint = opts.get("otel-endpoint");
+        String out = opts.get("otel-out");
+        boolean hasEndpoint = endpoint != null && !endpoint.isBlank();
+        boolean hasOut = out != null && !out.isBlank();
+        if (!hasEndpoint && !hasOut) return null;
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        Path file = hasOut ? Path.of(out) : null;
+        if (file != null && file.getParent() != null) java.nio.file.Files.createDirectories(file.getParent());
+        var exporter = hasEndpoint ? new com.agentlens.eval.OtlpExporter(
+                java.net.URI.create(endpoint),
+                java.time.Duration.ofSeconds(intOf(opts.get("otel-timeout-sec"), 10)), 2) : null;
+        System.out.printf("otel: %s%s%s%n",
+                hasEndpoint ? "endpoint=" + endpoint : "",
+                hasEndpoint && hasOut ? " " : "",
+                hasOut ? "file=" + file : "");
+        return run -> {
+            try {
+                Map<String, Object> payload = com.agentlens.otel.OtelSpanMapper.toOtlpJson(run);
+                if (file != null) java.nio.file.Files.writeString(file,
+                        json.writeValueAsString(payload) + System.lineSeparator(),
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND);
+                if (exporter != null) exporter.export(payload);
+            } catch (Exception e) {
+                System.err.println("otel export failed (fail-open): " + e);
+            }
+        };
+    }
+
+    /** Chains the optional OTel sink onto a runner (no-op without the flags). */
+    private static ExperimentRunner withOtel(ExperimentRunner runner, Map<String, String> opts) throws Exception {
+        java.util.function.Consumer<AgentRun> sink = otelSink(opts);
+        return sink == null ? runner : runner.onRunCompleted((run, evaluation) -> sink.accept(run));
+    }
+
     /** Generates a self-contained HTML report from the SQLite store. */
     private static void report(Map<String, String> opts) throws Exception {
         Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
@@ -104,6 +147,9 @@ public final class AgentLensApp {
         System.out.printf("  diagnoses: %d%n", diagnoses.size());
         diagnoses.forEach(d -> System.out.printf("    %-15s %-45s evidence=%s%n",
                 d.layer(), d.issue(), d.evidence()));
+
+        java.util.function.Consumer<AgentRun> otel = otelSink(opts);
+        if (otel != null) otel.accept(run);
     }
 
     /**
@@ -154,6 +200,8 @@ public final class AgentLensApp {
                             "problemId", String.valueOf(imported.problemId()))));
         }
         System.out.printf("  persisted run %s (adapter=aiopslab, version=imported)%n", run.runId());
+        java.util.function.Consumer<AgentRun> aiopslabOtel = otelSink(opts);
+        if (aiopslabOtel != null) aiopslabOtel.accept(run);
     }
 
     /**
@@ -207,6 +255,7 @@ public final class AgentLensApp {
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
+        java.util.function.Consumer<AgentRun> otel = otelSink(opts);
 
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
             for (int repeat = 1; repeat <= repeats; repeat++) {
@@ -246,6 +295,7 @@ public final class AgentLensApp {
                     } catch (Exception e) {
                         throw new IllegalStateException("sqlite persistence failed for " + run.runId(), e);
                     }
+                    if (otel != null) otel.accept(run);
                     byTask.computeIfAbsent(task.id(), t -> new ArrayList<>()).add(results);
                 }
             }
@@ -349,9 +399,9 @@ public final class AgentLensApp {
                 .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden))
                 .register(new ComplianceEvaluator());
         if (opts.containsKey("judge")) evaluators.register(judgeEvaluator(opts));
-        var runner = withSqlite(new ExperimentRunner(adapter, evaluators,
+        var runner = withOtel(withSqlite(new ExperimentRunner(adapter, evaluators,
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
-                opts.getOrDefault("db", DEFAULT_DB));
+                opts.getOrDefault("db", DEFAULT_DB)), opts);
 
         var batch = runner.run(tasks);
         System.out.printf("single batch: runs=%d, failures=%d, p50=%dms, p95=%dms, max=%dms%n",
@@ -420,9 +470,9 @@ public final class AgentLensApp {
             candLabel = "dsh-headless";
         } else {
             baseSummary = evaluateVersion(baselineBehavior,
-                    applyAll(tasks, baselineOverrides), repeats);
+                    applyAll(tasks, baselineOverrides), repeats, opts);
             candSummary = evaluateVersion(candidateBehavior,
-                    applyAll(tasks, candidateOverrides), repeats);
+                    applyAll(tasks, candidateOverrides), repeats, opts);
             baseLabel = "mock-" + baselineBehavior;
             candLabel = "mock-" + candidateBehavior;
         }
@@ -461,6 +511,7 @@ public final class AgentLensApp {
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
+        java.util.function.Consumer<AgentRun> otel = otelSink(opts);
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
             for (int repeat = 1; repeat <= repeats; repeat++) {
                 for (Scenario scenario : scenarios) {
@@ -482,6 +533,7 @@ public final class AgentLensApp {
                     sqlite.saveRun(run, dsh.name());
                     sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), task.id(),
                             dsh.name(), version, run.startedAt(), results, meta));
+                    if (otel != null) otel.accept(run);
                     byTask.computeIfAbsent(task.id(), t -> new ArrayList<>()).add(results);
                 }
             }
@@ -494,16 +546,17 @@ public final class AgentLensApp {
         return overrides.isEmpty() ? tasks : tasks.stream().map(t -> withOverrides(t, overrides)).toList();
     }
 
-    private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats)
+    private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats,
+                                                 Map<String, String> opts)
             throws Exception {
-        var runner = withSqlite(new ExperimentRunner(new com.agentlens.adapters.MockAgentAdapter(behavior),
+        var runner = withOtel(withSqlite(new ExperimentRunner(new com.agentlens.adapters.MockAgentAdapter(behavior),
                 new EvaluatorRegistry()
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
                         .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                         .register(new ComplianceEvaluator()),
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
-                DEFAULT_DB);
+                DEFAULT_DB), opts);
         var byTask = runner.runRepeated(tasks, repeats);
         return PassK.summarize(byTask);
     }

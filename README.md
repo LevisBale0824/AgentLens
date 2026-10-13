@@ -77,6 +77,10 @@ AgentLensApp demo
 # LLM 质量评审（P2-1，可选；本地 Ollama 推荐 --judge-ollama，见 docs/reports/llm-judge-design.md）
 AgentLensApp run --scenarios PATH --judge --judge-ollama
 AgentLensApp import --session PATH/TO/session.jsonl.zstd --judge --judge-ollama
+
+# OTLP 轨迹导出（P2-3 阶段一，可选，fail-open）：--otel-out 落 NDJSON 文件，--otel-endpoint 推 OTLP/HTTP collector
+AgentLensApp run --scenarios PATH --otel-out output/traces.ndjson
+AgentLensApp compare --adapter dsh --candidate-override "dshArgs=--model m" --otel-endpoint http://localhost:4318/v1/traces
 ```
 
 ## 插件化适配器

@@ -442,6 +442,22 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
 互补,可经 cli/http 适配器或 session 导入对比)。详见
 `docs/reports/aiopslab-integration.md`。
 
+### 7.5 P2-3: OpenTelemetry 导出(阶段一已落地)
+
+统一 Trace 保持唯一权威模型,OTel 仅为导出视图(保留领域事件语义):
+
+- **`OtelSpanMapper`(core)**:run = 根 Span(SERVER)+ 每事件子 Span(TOOL_CALL/MODEL_CALL
+  为 CLIENT),按 trace 顺序排列;traceId/spanId 由 runId SHA-256 确定性派生(同一落库 run
+  再导出必然同 trace,审计可复现);属性带 `agentlens.*` 前缀;ERROR 事件映射 Span error status。
+- **`OtlpExporter`(eval)+ CLI**:`--otel-endpoint URL`(OTLP/HTTP,重试+fail-open)与
+  `--otel-out PATH`(NDJSON 逐 run 追加,可离线检查),两 flag 可组合,run/import/compare/live
+  全路径接线。
+- 编码遵循 OTLP/JSON proto3 映射:hex id、int64 纳秒字符串、数字枚举;任何 OTLP/HTTP
+  collector(Jaeger/Tempo/Phoenix/Langfuse)通用。
+- 验证:8 个 mapper 单测(结构/确定性/父子链/纳秒时长/属性变体/状态映射)+ 4 个 exporter
+  单测(本地 httpserver 收包/500 重试/连接拒绝 fail-open/非 2xx 判失败)+ mock 冒烟
+  NDJSON 结构核验;collector 端到端实测待环境。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
