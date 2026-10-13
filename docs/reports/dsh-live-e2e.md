@@ -135,5 +135,5 @@ Trace 现在是 headless 子会话自身的动作（glob 探测 → write 创建
 
 ### 后续建议（新增）
 
-5. `dirToken` 的破折号折叠在极端路径（如 `D:\tmp-x\a` 与 `D:\tmp\x\a`）会归并为同一 token，可改为精确复刻 DSH 的目录名编码函数。
+5. ~~`dirToken` 的破折号折叠在极端路径（如 `D:\tmp-x\a` 与 `D:\tmp\x\a`）会归并为同一 token，可改为精确复刻 DSH 的目录名编码函数。~~ ✅ 已修复：对照真机会话目录实测编码（`D:\code\AgentDock` → `--D-code-AgentDock--`：连续非字母数字折叠为单连字符 + `--` 包裹 + 保留大小写），`underCwdDirectory` 由 `contains` 收紧为折叠后全等（`D:\tmp` 不再误匹配 `--D-code-d-tmp--`）；同折叠碰撞为 DSH 命名固有，测试记录之（DshSessionLogDiscoveryTest 3 例新增）。
 6. 自举评测（在 dsh 会话内跑 AgentLens）应成为固定回归场景，本次正是它暴露了误绑定。

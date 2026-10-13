@@ -129,7 +129,10 @@ dsh-live-e2e.md 问题 3)。原始输出:`D:\tmp\dsh-eval\controlled-run1.txt`�
 
 ## 后续建议
 
-1. compare 交互式用法(如 candidate 侧换模型/换 dsh 配置)需适配器支持 per-side 配置,
-   可作为 v0.3 候选。
+1. ~~compare 交互式用法(如 candidate 侧换模型/换 dsh 配置)需适配器支持 per-side 配置,
+   可作为 v0.3 候选。~~ ✅ 已落地(`--baseline-override/--candidate-override`,7fdd0ea)。
 2. `--repeats 2` 以上的 pass^k 分层(FLAKY 检测)可在真 Agent 上补一次测量(约 8 会话)。
-3. `dirToken` 破折号折叠的极端路径碰撞(见 dsh-live-e2e.md 建议 5)仍为已知小缺陷。
+3. ~~`dirToken` 破折号折叠的极端路径碰撞~~ ✅ 已修复:对照真机会话目录实测
+   (`D:\code\AgentDock` → `--D-code-AgentDock--`)精确复刻 DSH 命名,匹配从宽松
+   `contains` 收紧为折叠后全等——cwd `D:\tmp` 不再误匹配 `--D-code-d-tmp--`;
+   同折叠路径碰撞(`D:\tmp-x\a` vs `D:\tmp\x\a`)系 DSH 自身命名固有,已有测试记录。

@@ -249,11 +249,20 @@ public final class DshAgentAdapter implements AgentAdapter {
         }
     }
 
-    /** True if some directory between the log file and {@code sessionsRoot} encodes the cwd token. */
+    /**
+     * True if some directory between the log file and {@code sessionsRoot} is exactly
+     * DSH's encoding of the cwd. DSH names the session directory {@code --<cwd>--} with
+     * runs of non-alphanumerics folded to single dashes ({@code D:\code\X} becomes
+     * {@code --D-code-X--}), so folding both sides and requiring <b>equality</b> rejects
+     * unrelated sessions whose names merely contain our token (e.g. cwd {@code D:\tmp}
+     * must not match {@code --D-code-d-tmp--} for {@code D:\code\d-tmp}). Two distinct
+     * paths can still fold to the same token ({@code D:\tmp-x\a} vs {@code D:\tmp\x\a});
+     * that collision is inherent to DSH's own naming, not something we can refine here.
+     */
     static boolean underCwdDirectory(Path log, Path sessionsRoot, String token) {
         for (Path dir = log.getParent(); dir != null && dir.startsWith(sessionsRoot); dir = dir.getParent()) {
             Path name = dir.getFileName();
-            if (name != null && normalizeDashes(name.toString()).contains(token)) {
+            if (name != null && normalizeDashes(name.toString()).equals(token)) {
                 return true;
             }
         }
