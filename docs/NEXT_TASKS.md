@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计）。**P2-3 OTLP 导出阶段一已落地**（`OtelSpanMapper` Event→Span 确定性映射 + `OtlpExporter` OTLP/JSON `--otel-endpoint/--otel-out`，重试+fail-open，mock 冒烟验证结构；collector 对接实测待环境）。**P2-4 迷你 Web Dashboard 已落地**（`serve` 命令，运行筛选/趋势/trace+诊断详情/版本对比，见 ROADMAP 7.6）。**P2-5 配置校验 + 结构化日志 + SpotBugs/Checkstyle 门禁已落地**（fail-fast 校验 + `--log-json` 请求 ID NDJSON + `mvn -Pquality verify` 双静态分析门禁接入 CI，见 ROADMAP 7.7）。**剩余重点：AIOpsLab 集群实测 + K8sGPT、collector 对接实测、DeepEval/Ragas 指标接入、judge 标定、--repeats>=2 真机 pass^k。**
+> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计）。**P2-3 OTLP 导出阶段一已落地**（`OtelSpanMapper` Event→Span 确定性映射 + `OtlpExporter` OTLP/JSON `--otel-endpoint/--otel-out`，重试+fail-open，mock 冒烟验证结构；collector 对接实测待环境）。**P2-4 迷你 Web Dashboard 已落地**（`serve` 命令，运行筛选/趋势/trace+诊断详情/版本对比，见 ROADMAP 7.6）。**P2-5 配置校验 + 结构化日志 + SpotBugs/Checkstyle 门禁已落地**（fail-fast 校验 + `--log-json` 请求 ID NDJSON + `mvn -Pquality verify` 双静态分析门禁接入 CI，见 ROADMAP 7.7）。**Judge 标定框架 + DeepEval 风格指标适配器已落地**（`judge-calibrate` + `--deepeval`，qwen2.5:7b 基线报告 docs/reports/judge-calibration-qwen25-7b.md，见 ROADMAP 7.8/7.9）。**dirToken 路径碰撞已修复**（对照真机 DSH 编码收紧匹配）。**剩余重点：AIOpsLab 集群实测 + K8sGPT、collector 对接实测、更大 judge 模型 κ 对比、--repeats>=2 真机 pass^k。**
 
 ## 优先级定义
 
@@ -196,7 +196,11 @@ P2 LLM Judge / Web UI / 外部集成
 - 结构化 JSON 输出。
 - Schema 校验、重试和缓存。
 - 记录 Judge 模型和 Prompt 版本。
-- 复用 DeepEval/Ragas 指标时通过 Adapter 接入。
+- ✅ 复用 DeepEval 指标通过 Adapter 接入（board T7 阶段一，ROADMAP 7.9）：`DeepEvalAdapter`
+  ——faithfulness / answer_relevancy / hallucination 三大经典指标跑在共享 `LlmJudge` 后端
+  （OpenAI-compatible 或本地 Ollama），零 Python 依赖；`--deepeval` 启用、`--deepeval-metrics`
+  选子集；fail-open 语义与 LlmJudgeEvaluator 一致（指标降级不拖垮 run）；6 单测。
+  阶段二（原生 DeepEval/Ragas subprocess，需 Python 环境）待环境确认。
 - ✅ 标定框架（board T6，ROADMAP 7.8）：`judge-calibrate` 命令——mock 行为语料
   （correct/wrong_tool/forbidden_action/loop/cheat_tamper/cheat_hardcode，确定性生成、
   零 Agent 侧成本）× N 次 × LLM judge（本地 Ollama），输出 accuracy/precision/recall/F1/

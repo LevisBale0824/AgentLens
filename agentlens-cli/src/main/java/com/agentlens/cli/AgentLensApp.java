@@ -266,6 +266,7 @@ public final class AgentLensApp {
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                 .register(new ComplianceEvaluator());
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
+        if (opts.containsKey("deepeval")) registry.register(deepEvalEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
         java.util.function.Consumer<AgentRun> otel = otelSink(opts);
@@ -527,6 +528,7 @@ public final class AgentLensApp {
                 .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden))
                 .register(new ComplianceEvaluator());
         if (opts.containsKey("judge")) evaluators.register(judgeEvaluator(opts));
+        if (opts.containsKey("deepeval")) evaluators.register(deepEvalEvaluator(opts));
         var runner = withOtel(withSqlite(new ExperimentRunner(adapter, evaluators,
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
                 opts.getOrDefault("db", DEFAULT_DB)), opts);
@@ -665,6 +667,7 @@ public final class AgentLensApp {
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                 .register(new ComplianceEvaluator());
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
+        if (opts.containsKey("deepeval")) registry.register(deepEvalEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
         Map<String, List<List<com.agentlens.core.EvaluationResult>>> byTask = new java.util.LinkedHashMap<>();
         java.util.function.Consumer<AgentRun> otel = otelSink(opts);
@@ -738,8 +741,8 @@ public final class AgentLensApp {
         }
     }
 
-    /** Builds the LLM judge evaluator from CLI options / environment (ROADMAP P2-1). */
-    private static com.agentlens.eval.LlmJudgeEvaluator judgeEvaluator(Map<String, String> opts) {
+    /** Shared judge backend construction from CLI options / environment (ROADMAP P2-1/T7). */
+    private static com.agentlens.eval.LlmJudge buildJudge(Map<String, String> opts) {
         String url = opts.getOrDefault("judge-url",
                 envOr("AGENTLENS_JUDGE_URL", "http://localhost:11434"));
         String model = opts.getOrDefault("judge-model",
@@ -750,16 +753,43 @@ public final class AgentLensApp {
                 || "true".equalsIgnoreCase(System.getenv("AGENTLENS_JUDGE_JSON_MODE"));
         boolean ollamaNative = opts.containsKey("judge-ollama")
                 || "true".equalsIgnoreCase(System.getenv("AGENTLENS_JUDGE_OLLAMA"));
-        var judge = new com.agentlens.eval.OpenAiJudge(java.net.URI.create(url), model, key,
-                0.0, java.time.Duration.ofSeconds(Integer.parseInt(
-                        opts.getOrDefault("judge-timeout-sec", envOr("AGENTLENS_JUDGE_TIMEOUT_SEC", "120")))),
+        return new com.agentlens.eval.OpenAiJudge(java.net.URI.create(url), model, key,
+                0.0, java.time.Duration.ofSeconds(requireInt(opts, "judge-timeout-sec",
+                        Integer.parseInt(envOr("AGENTLENS_JUDGE_TIMEOUT_SEC", "120")))),
                 3, jsonMode, ollamaNative);
+    }
+
+    /** Builds the LLM judge evaluator from CLI options / environment (ROADMAP P2-1). */
+    private static com.agentlens.eval.LlmJudgeEvaluator judgeEvaluator(Map<String, String> opts) {
+        var judge = buildJudge(opts);
+        String url = opts.getOrDefault("judge-url",
+                envOr("AGENTLENS_JUDGE_URL", "http://localhost:11434"));
+        String model = opts.getOrDefault("judge-model",
+                envOr("AGENTLENS_JUDGE_MODEL", "qwen2.5:7b"));
+        boolean jsonMode = opts.containsKey("judge-json-mode")
+                || "true".equalsIgnoreCase(System.getenv("AGENTLENS_JUDGE_JSON_MODE"));
+        boolean ollamaNative = opts.containsKey("judge-ollama")
+                || "true".equalsIgnoreCase(System.getenv("AGENTLENS_JUDGE_OLLAMA"));
         System.out.printf("judge: %s (model=%s, url=%s, jsonMode=%s, ollamaNative=%s, criteria=%s, fail-open)%n",
                 com.agentlens.eval.LlmJudgeEvaluator.EVALUATOR_NAME, model, url, jsonMode, ollamaNative,
                 com.agentlens.eval.LlmJudgeEvaluator.CRITERIA.keySet());
         var criteria = new java.util.ArrayList<>(csv(opts.get("judge-criteria")));
         return criteria.isEmpty() ? new com.agentlens.eval.LlmJudgeEvaluator(judge)
                 : new com.agentlens.eval.LlmJudgeEvaluator(judge, criteria);
+    }
+
+    /**
+     * DeepEval-style metrics evaluator (board T7, phase 1): the canonical
+     * faithfulness / answer_relevancy / hallucination rubrics on the shared
+     * judge backend. Enabled with --deepeval, narrowed with --deepeval-metrics.
+     */
+    private static com.agentlens.eval.Evaluator deepEvalEvaluator(Map<String, String> opts) {
+        var judge = buildJudge(opts);
+        var selected = new java.util.ArrayList<>(csv(opts.get("deepeval-metrics")));
+        System.out.printf("deepeval: metrics=%s (judge backend shared with --judge, fail-open)%n",
+                selected.isEmpty() ? com.agentlens.eval.DeepEvalAdapter.METRICS.keySet() : selected);
+        return selected.isEmpty() ? new com.agentlens.eval.DeepEvalAdapter(judge)
+                : new com.agentlens.eval.DeepEvalAdapter(judge, selected);
     }
 
     /**

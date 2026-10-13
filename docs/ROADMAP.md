@@ -510,6 +510,21 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
   (机器可读,含逐样本 reason);结构化日志 `judge.calibrated`。
 - 退出码语义:标定是测量不是门禁,恒 0;是否达标由人根据 kappa 阈值判断。
 
+### 7.9 P2-1 扩展: DeepEval 风格指标适配器(阶段一已落地)
+
+`DeepEvalAdapter`(eval)——DeepEval 三大经典质量指标映射到统一 Trace 域,跑在与
+`LlmJudgeEvaluator` 相同的可插拔 `LlmJudge` 后端(OpenAI-compatible / 本地 Ollama),
+零 Python 依赖(原生 DeepEval subprocess 集成为阶段二,需 Python 环境):
+
+- **指标**:faithfulness(答案断言必须被 trace 中的工具结果支撑)、answer_relevancy
+  (答案直接回应任务指令)、hallucination(与工具结果矛盾即为幻觉)。
+- **CLI**:`--deepeval` 启用,`--deepeval-metrics a,b` 选子集;judge 后端与 `--judge`
+  共享(url/model/超时/ollama 原生协议全部复用)。
+- **合并语义**:单评测器输出,分数=各指标均值,通过=全部通过;**fail-open**与 P2-1 一致
+  ——单个指标降级记入 reason/evidence 不拖垮 run,全部降级则 passed=true score=0。
+- **测试**:6 个单测(stub judge,无 LLM)覆盖通过合并/单指标失败/部分降级/全部降级/
+  子集选择/未知指标拒绝。真机冒烟:qwen2.5:7b 判定参与门禁(其严格性与 7.8 标定一致)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
