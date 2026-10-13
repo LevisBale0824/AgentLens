@@ -343,8 +343,11 @@ AgentLens 的差异化定位决定了 pass^k 必要：卖点是"Agent 行为可�
 SUCCESS,pass^k 1.000 → 1.000 门禁放行。详见
 `docs/reports/dsh-controlled-compare-e2e.md`。
 
-**待办**:真 Agent 上的退化候选演示(candidate 侧换模型/配置,需适配器支持 per-side
-配置);`--repeats>=2` 的真机 pass^k 分层测量。
+**待办**:`--repeats>=2` 的真机 pass^k 分层测量。per-side 配置已落地(v0.3):compare
+新增 `--baseline-override/--candidate-override`(按侧合并任务 context),DSH 适配器消费
+`dshArgs`(额外 CLI 参数)与 `env.*`(子进程环境变量)键,逐 run 打印并落库 trace 实测
+模型(observedModel)+ 覆盖项(sideOverrides metadata)——真 Agent 退化候选演示
+(baseline 大模型 vs candidate 小模型)已具备实现通道,真机实测待配额。
 
 **重复调用检测升级（callId 感知，已完成）**：原实现按「相邻 TOOL_CALL 同名」计数，
 同名不同参（如连续 `read` 不同文件）会误报为 retry loop，且无法区分真重试与并行调用。

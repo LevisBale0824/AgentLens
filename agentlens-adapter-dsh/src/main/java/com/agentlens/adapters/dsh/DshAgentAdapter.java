@@ -35,9 +35,20 @@ import java.util.stream.Stream;
  * <ul>
  *   <li>workdir     - session working directory (default: process cwd)</li>
  *   <li>dshCommand  - launcher (default: env DSH_CMD, else "dsh")</li>
+ *   <li>dshArgs     - extra CLI args inserted after "--profile headless" and before
+ *                     the instruction (whitespace-separated string or list), e.g.
+ *                     "dshArgs" = "--model qwen2.5:7b" for per-side model overrides</li>
+ *   <li>env.KEY     - any context key prefixed "env." becomes a process environment
+ *                     variable for the dsh child (e.g. "env.DSH_MODEL" = "qwen2.5:3b")</li>
  *   <li>timeoutSec  - wall clock budget per task (default 900)</li>
  *   <li>dshHome     - session root (default: env DSH_HOME, else ~/.dsh)</li>
  * </ul>
+ *
+ * The dshArgs/env.* keys are what makes baseline/candidate compares of the REAL
+ * agent possible: the same scenario set runs twice with different per-side
+ * overrides (e.g. candidate on a smaller model) merged into the task context by
+ * the CLI, and each run's trace records the provider/model actually used
+ * (request/context -> MODEL_CALL attributes), so the effective config is auditable.
  */
 public final class DshAgentAdapter implements AgentAdapter {
     private static final long DEFAULT_TIMEOUT_SEC = 900;
@@ -68,16 +79,15 @@ public final class DshAgentAdapter implements AgentAdapter {
         long startMillis = System.currentTimeMillis() - 2_000; // tolerate fs timestamp skew
         Map<String, Object> ctx = task.context();
         Path workdir = Path.of(str(ctx.get("workdir"), System.getProperty("user.dir")));
-        List<String> fullCommand = new ArrayList<>(launcher(
-                str(ctx.get("dshCommand"), env("DSH_CMD", "dsh"))));
-        fullCommand.add(task.instruction());
+        List<String> fullCommand = commandFor(task);
         long timeoutSec = lng(ctx.get("timeoutSec"), DEFAULT_TIMEOUT_SEC);
 
         try {
-            Process process = new ProcessBuilder(fullCommand)
+            ProcessBuilder processBuilder = new ProcessBuilder(fullCommand)
                     .directory(workdir.toFile())
-                    .redirectErrorStream(true)
-                    .start();
+                    .redirectErrorStream(true);
+            processBuilder.environment().putAll(extraEnv(ctx));
+            Process process = processBuilder.start();
             // Drain output concurrently so a full pipe cannot deadlock the child.
             StringBuilder outputTail = new StringBuilder();
             Thread drain = new Thread(() -> {
@@ -279,6 +289,48 @@ public final class DshAgentAdapter implements AgentAdapter {
         command.add("--profile");
         command.add("headless");
         return command;
+    }
+
+    /**
+     * Full headless command for a task: launcher + "--profile headless" + optional
+     * extra args from the "dshArgs" context key + the instruction (always last).
+     * Package-private for unit tests.
+     */
+    static List<String> commandFor(AgentTask task) {
+        List<String> command = new ArrayList<>(launcher(
+                str(task.context().get("dshCommand"), env("DSH_CMD", "dsh"))));
+        command.addAll(dshArgs(task.context().get("dshArgs")));
+        command.add(task.instruction());
+        return command;
+    }
+
+    /**
+     * Extra CLI args from the "dshArgs" context key: a whitespace-separated string
+     * or a list of tokens (values from CLI overrides arrive as strings). Empty or
+     * blank means no extra args.
+     */
+    static List<String> dshArgs(Object value) {
+        if (value instanceof List<?> list)
+            return list.stream().map(String::valueOf).map(String::trim)
+                    .filter(s -> !s.isEmpty()).toList();
+        if (value instanceof String s && !s.isBlank())
+            return List.of(s.trim().split("\\s+"));
+        return List.of();
+    }
+
+    /**
+     * Process-environment overrides for the dsh child: every context key prefixed
+     * "env." (e.g. "env.DSH_MODEL") becomes environment variable KEY. Package-private
+     * for unit tests.
+     */
+    static Map<String, String> extraEnv(Map<String, Object> ctx) {
+        Map<String, String> env = new java.util.LinkedHashMap<>();
+        if (ctx == null) return env;
+        ctx.forEach((key, value) -> {
+            if (key.startsWith("env.") && value != null && !String.valueOf(value).isBlank())
+                env.put(key.substring(4), String.valueOf(value));
+        });
+        return env;
     }
 
     private static AgentRun failed(AgentTask task, Instant started, RunStatus status, String error) {

@@ -26,6 +26,9 @@ import java.util.Set;
  *   run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden T1,T2] [--judge]
  *   compare --baseline BEHAVIOR --candidate BEHAVIOR [--scenarios PATH] [--repeats K]
  *           [--adapter dsh]   (both sides = real headless DSH sessions; --judge supported)
+ *           [--baseline-override k=v,...] [--candidate-override k=v,...]
+ *                             (per-side task-context overrides; with dsh: dshArgs=... /
+ *                              env.KEY=... switch the candidate's model or launcher config)
  *   demo
  */
 public final class AgentLensApp {
@@ -283,6 +286,10 @@ public final class AgentLensApp {
                 System.out.println("  evaluation:");
                 ev.results().forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
                         r.evaluator(), r.passed(), r.reason()));
+                if (!ev.metadata().isEmpty()) {
+                    System.out.println("  metadata:");
+                    ev.metadata().forEach((k, v) -> System.out.printf("    %-16s %s%n", k, v));
+                }
             }, () -> System.out.println("  evaluation: none recorded"));
         }
     }
@@ -300,7 +307,7 @@ public final class AgentLensApp {
             case "aiopslab-catalog" -> aiopslabCatalog(opts);
             default -> {
                 System.err.println("unknown command: " + command);
-                System.err.println("usage: run [...] | compare --baseline B --candidate B | show --run ID | report [--db PATH] [--out PATH] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
+                System.err.println("usage: run [...] | compare --baseline B --candidate B [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID | report [--db PATH] [--out PATH] | import --session PATH | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH] [--out PATH] | demo");
                 System.exit(2);
             }
         }
@@ -371,6 +378,14 @@ public final class AgentLensApp {
      * release measurements of the agent, compared by the same gate. Sessions run
      * sequentially (parallel sessions in one workdir would race on artifacts);
      * each run is persisted with agentVersion=baseline/candidate.
+     *
+     * <p>Per-side configuration (ROADMAP 7.2): {@code --baseline-override} and
+     * {@code --candidate-override} take comma-separated key=value entries merged
+     * into that side's task context only - e.g. {@code --candidate-override
+     * "dshArgs=--model qwen2.5:3b"} runs the candidate on a smaller model, making
+     * a REAL degraded candidate possible (the pass^k gate should reject it). The
+     * effective model recorded in each trace (MODEL_CALL attributes) is printed
+     * and persisted per run, so the gate decision stays auditable.
      */
     private static void compare(Map<String, String> opts) throws Exception {
         Path scenariosPath = Path.of(opts.getOrDefault("scenarios", DEFAULT_SCENARIOS));
@@ -379,11 +394,17 @@ public final class AgentLensApp {
         int repeats = intOf(opts.get("repeats"), "dsh".equals(adapterName) ? 1 : 5);
         String baselineBehavior = opts.getOrDefault("baseline", "correct");
         String candidateBehavior = opts.getOrDefault("candidate", "flaky");
+        Map<String, String> baselineOverrides = parseOverrides(opts.get("baseline-override"));
+        Map<String, String> candidateOverrides = parseOverrides(opts.get("candidate-override"));
 
         List<Scenario> scenarios = new ScenarioLoader().load(scenariosPath);
         List<AgentTask> tasks = scenarios.stream().map(Scenario::toTask).toList();
         System.out.printf("comparing releases on %d scenarios from %s, repeats=%d, adapter=%s%n",
                 scenarios.size(), scenariosPath, repeats, adapterName);
+        if (!baselineOverrides.isEmpty())
+            System.out.printf("baseline overrides: %s%n", baselineOverrides);
+        if (!candidateOverrides.isEmpty())
+            System.out.printf("candidate overrides: %s%n", candidateOverrides);
         if ("dsh".equals(adapterName)) {
             System.out.printf("estimated dsh sessions: %d (sides=2 x scenarios=%d x repeats=%d)%n",
                     2 * scenarios.size() * repeats, scenarios.size(), repeats);
@@ -393,13 +414,15 @@ public final class AgentLensApp {
         String baseLabel, candLabel;
         if ("dsh".equals(adapterName)) {
             var dsh = (com.agentlens.adapters.dsh.DshAgentAdapter) AdapterRegistry.load().get("dsh");
-            baseSummary = evaluateDshVersion(dsh, scenarios, repeats, "baseline", opts);
-            candSummary = evaluateDshVersion(dsh, scenarios, repeats, "candidate", opts);
+            baseSummary = evaluateDshVersion(dsh, scenarios, repeats, "baseline", baselineOverrides, opts);
+            candSummary = evaluateDshVersion(dsh, scenarios, repeats, "candidate", candidateOverrides, opts);
             baseLabel = "dsh-headless";
             candLabel = "dsh-headless";
         } else {
-            baseSummary = evaluateVersion(baselineBehavior, tasks, repeats);
-            candSummary = evaluateVersion(candidateBehavior, tasks, repeats);
+            baseSummary = evaluateVersion(baselineBehavior,
+                    applyAll(tasks, baselineOverrides), repeats);
+            candSummary = evaluateVersion(candidateBehavior,
+                    applyAll(tasks, candidateOverrides), repeats);
             baseLabel = "mock-" + baselineBehavior;
             candLabel = "mock-" + candidateBehavior;
         }
@@ -421,9 +444,14 @@ public final class AgentLensApp {
      * through headless sessions, evaluates + diagnoses + persists each run, and
      * aggregates the pass^k summary. {@code version} tags the persisted runs
      * (agentVersion=baseline/candidate) so show/report can tell the sides apart.
+     * {@code sideOverrides} is merged into every task context of this side only
+     * (per-side model/config); each run prints the provider/model the session
+     * actually used, and both the overrides and the observed model land in the
+     * evaluation metadata for auditability.
      */
     private static PassK.Summary evaluateDshVersion(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
                                                     List<Scenario> scenarios, int repeats, String version,
+                                                    Map<String, String> sideOverrides,
                                                     Map<String, String> opts) throws Exception {
         var registry = new EvaluatorRegistry()
                 .register(new TaskCompletionEvaluator())
@@ -436,23 +464,34 @@ public final class AgentLensApp {
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
             for (int repeat = 1; repeat <= repeats; repeat++) {
                 for (Scenario scenario : scenarios) {
-                    var task = scenario.toTask();
+                    var task = withOverrides(scenario.toTask(), sideOverrides);
                     System.out.printf("%n[%s] repeat %d/%d: %s%n", version, repeat, repeats, task.id());
                     AgentRun run = dsh.run(task);
+                    String model = observedModel(run);
                     var results = registry.evaluate(task, run);
                     var diagnoses = diagnosis.diagnose(task, run, results);
-                    System.out.printf("  => status=%s duration=%dms events=%d diagnoses=%d%n",
-                            run.status(), run.durationMs(), run.events().size(), diagnoses.size());
+                    System.out.printf("  => status=%s duration=%dms events=%d diagnoses=%d model=%s%n",
+                            run.status(), run.durationMs(), run.events().size(), diagnoses.size(),
+                            model != null ? model : "n/a");
                     diagnoses.forEach(d -> System.out.printf("     ! %-13s %s%n", d.layer(), d.issue()));
+                    var meta = new java.util.LinkedHashMap<String, Object>();
+                    meta.put("durationMs", run.durationMs());
+                    meta.put("totalTokens", run.totalTokens());
+                    if (!sideOverrides.isEmpty()) meta.put("sideOverrides", sideOverrides);
+                    if (model != null) meta.put("observedModel", model);
                     sqlite.saveRun(run, dsh.name());
                     sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), task.id(),
-                            dsh.name(), version, run.startedAt(), results,
-                            Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens())));
+                            dsh.name(), version, run.startedAt(), results, meta));
                     byTask.computeIfAbsent(task.id(), t -> new ArrayList<>()).add(results);
                 }
             }
         }
         return PassK.summarize(byTask);
+    }
+
+    /** Applies the same context overrides to every task of a side. */
+    private static List<AgentTask> applyAll(List<AgentTask> tasks, Map<String, String> overrides) {
+        return overrides.isEmpty() ? tasks : tasks.stream().map(t -> withOverrides(t, overrides)).toList();
     }
 
     private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats)
@@ -569,6 +608,46 @@ public final class AgentLensApp {
         if (value == null) return defaultVal;
         try { return Math.max(1, Integer.parseInt(value)); }
         catch (NumberFormatException e) { return defaultVal; }
+    }
+
+    /**
+     * Parses a per-side override spec: comma-separated key=value pairs merged into
+     * each task's context before the side runs (values may contain spaces and '=';
+     * a token without '=' becomes the flag value "true"). Package-private for tests.
+     */
+    static Map<String, String> parseOverrides(String spec) {
+        if (spec == null || spec.isBlank()) return Map.of();
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        for (String token : spec.split(",")) {
+            String t = token.trim();
+            if (t.isEmpty()) continue;
+            int eq = t.indexOf('=');
+            if (eq < 0) out.put(t, "true");
+            else out.put(t.substring(0, eq).trim(), t.substring(eq + 1).trim());
+        }
+        return out;
+    }
+
+    /** Returns the task with override entries merged over its context (override wins). */
+    static AgentTask withOverrides(AgentTask task, Map<String, String> overrides) {
+        if (overrides.isEmpty()) return task;
+        var ctx = new java.util.LinkedHashMap<>(task.context());
+        ctx.putAll(overrides);
+        return new AgentTask(task.id(), task.instruction(), ctx, task.maxSteps());
+    }
+
+    /**
+     * The provider/model the dsh session actually used, taken from the first
+     * MODEL_CALL event carrying a model attribute (request/context mapping).
+     * This is the audit hook proving a per-side override took effect.
+     */
+    private static String observedModel(AgentRun run) {
+        return run.events().stream()
+                .filter(e -> e.type() == com.agentlens.core.EventType.MODEL_CALL)
+                .map(e -> e.attributes().get("model"))
+                .filter(v -> v != null && !String.valueOf(v).isBlank())
+                .map(String::valueOf)
+                .findFirst().orElse(null);
     }
 
     private static Set<String> csv(String value) {

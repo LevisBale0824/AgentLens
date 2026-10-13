@@ -63,6 +63,49 @@ class SqliteRunStoreTest {
         }
     }
 
+    /**
+     * Per-side compare audit fields (sideOverrides / observedModel) must survive
+     * the store: the gate decision is audited against exactly these values.
+     */
+    @Test
+    void evaluationMetadataRoundtripRestoresAuditFields() throws Exception {
+        var evaluation = new EvaluationRun("eval-meta-1", "task-1", "dsh", "candidate",
+                Instant.parse("2026-01-01T00:00:00Z"),
+                List.of(new EvaluationResult("task-completion", true, 1.0, "ok", Map.of())),
+                Map.of("durationMs", 20090L, "totalTokens", 0L,
+                        "observedModel", "qwen2.5:3b",
+                        "sideOverrides", Map.of("dshArgs", "--model qwen2.5:3b")));
+
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("runs.db"))) {
+            store.saveEvaluation(evaluation);
+            var restored = store.loadEvaluation("eval-meta-1");
+            assertTrue(restored.isPresent());
+            assertEquals("qwen2.5:3b", restored.get().metadata().get("observedModel"));
+            // JSON roundtrip may narrow integral numbers: compare numerically.
+            assertEquals(20090L,
+                    ((Number) restored.get().metadata().get("durationMs")).longValue());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> sideOverrides =
+                    (Map<String, Object>) restored.get().metadata().get("sideOverrides");
+            assertEquals("--model qwen2.5:3b", sideOverrides.get("dshArgs"));
+        }
+    }
+
+    /** Evaluations saved without metadata restore to an empty metadata map. */
+    @Test
+    void evaluationWithoutMetadataLoadsEmptyMetadata() throws Exception {
+        var evaluation = new EvaluationRun("eval-nometa", "task-1", "mock", "v1",
+                Instant.parse("2026-01-01T00:00:00Z"),
+                List.of(new EvaluationResult("task-completion", true, 1.0, "ok", Map.of())),
+                Map.of());
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("runs.db"))) {
+            store.saveEvaluation(evaluation);
+            var restored = store.loadEvaluation("eval-nometa");
+            assertTrue(restored.isPresent());
+            assertTrue(restored.get().metadata().isEmpty());
+        }
+    }
+
     @Test
     void listRunsReturnsSavedIds() throws Exception {
         AgentTask task = new AgentTask("list-test", "diagnose", Map.of(), 5);

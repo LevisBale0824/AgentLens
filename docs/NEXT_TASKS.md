@@ -1,6 +1,6 @@
 # AgentLens 近期任务清单
 
-> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**剩余重点：AIOpsLab 集群实测 + K8sGPT、OpenTelemetry 兼容（P2-3）、DeepEval/Ragas 指标接入、judge 标定。**
+> **状态速览（2026-09）**：P0/P1 全部完成；pass^k 指标与发版门禁落地（ROADMAP 7.1）；诊断引擎升级为 trace 级规则引擎并完成 callId 感知重复调用检测（真重试/无进展/并行三分类）。适配器插件化（SPI）+ DSH Trace Adapter（7.2）：导入/受控/live 三模式均经真机端到端验证（live 落库 + pass^k 摘要 + 门禁；受控模式与 DSH 版 compare 见 docs/reports/dsh-controlled-compare-e2e.md）；compliance 红线评测器、Docker Demo、自包含 HTML 报告均已落地。**P2-1 LLM Judge 已落地**（docs/reports/llm-judge-design.md：结构化 JSON+重试+缓存+版本记录+fail-open，本地 Ollama 真机验证）。**P2-2 AIOpsLab 适配层已落地**（docs/reports/aiopslab-integration.md：97 题官方目录 → 场景数据集、session JSON → 统一 Trace 导入、SPI 集群桥接；完整集群实测待环境）。CI 全链路自动验证。**compare per-side 配置已落地**（`--baseline-override/--candidate-override` → 任务 context → DSH 适配器 `dshArgs`/`env.*`，逐 run 打印实测模型 + 覆盖项落库审计；真 Agent 退化候选实测待配额）。**剩余重点：AIOpsLab 集群实测 + K8sGPT、OpenTelemetry 兼容（P2-3）、DeepEval/Ragas 指标接入、judge 标定、--repeats>=2 真机 pass^k。**
 
 ## 优先级定义
 

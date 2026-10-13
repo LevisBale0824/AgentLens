@@ -38,7 +38,7 @@ flaky 候选版被门禁拒绝——间歇性失败不会被平均分掩盖。�
 需要 JDK 17+ 和 Maven 3.8+：
 
 ```bash
-mvn clean verify        # 构建并运行全部测试（42 个）
+mvn clean verify        # 构建并运行全部测试（162 个，26 个测试类）
 ```
 
 CLI 命令：
@@ -50,6 +50,10 @@ AgentLensApp run [--scenarios PATH] [--repeats K] [--adapter NAME] [--allowed T1
 # baseline/candidate 发版对比（核心演示；--adapter dsh 两侧均为真实 headless 会话）
 AgentLensApp compare --baseline correct --candidate flaky [--scenarios PATH] [--repeats K]
 AgentLensApp compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenarios.json
+
+# 真 Agent 退化候选对比：candidate 侧换模型（per-side 配置覆盖，逐 run 打印 trace 实测模型）
+AgentLensApp compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenarios.json \
+    --candidate-override "dshArgs=--model qwen2.5:3b"
 
 # 导入已有 DSH session log：zstd 解码 → 统一 Trace → 评测 + 诊断（零成本离线分析）
 AgentLensApp import --session PATH/TO/session.jsonl.zstd [--task ID]

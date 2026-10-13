@@ -177,16 +177,28 @@ mvn -q exec:java -pl agentlens-cli \
 - 首跑实录（2 场景 × 2 侧，4 会话全 SUCCESS，门禁放行）见
   [docs/reports/dsh-controlled-compare-e2e.md](reports/dsh-controlled-compare-e2e.md)。
 
-### 5. baseline/candidate 对比
+### 6. per-side 配置：candidate 侧换模型/换配置（真 Agent 退化候选）
 
-对 DSH 的典型用法（当前 `compare` 子命令的 --baseline/--candidate 语义仍是 mock 行为，
-DSH 版对比需通过两次 `run` + 不同配置实现，见 ROADMAP 待办）：
+`compare` 支持 per-side 配置覆盖——baseline/candidate 各自携带独立的 `key=value`
+覆盖项，按侧合并进任务 context，适配器按 context 消费：
 
-```text
-baseline  = DSH + 模型 A（或某插件配置）
-candidate = DSH + 模型 B
-同一场景集、同 repeats，比较 pass^k
+```bash
+# candidate 侧换小模型（dshArgs = 插在 --profile headless 之后的额外 CLI 参数）
+mvn -q exec:java -pl agentlens-cli "-Dexec.mainClass=com.agentlens.cli.AgentLensApp" `
+  "-Dexec.args=compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenarios.json --repeats 1 --candidate-override dshArgs=--model qwen2.5:3b"
+
+# 也可用进程环境变量（context 键前缀 env.*）
+--candidate-override "env.DSH_MODEL=qwen2.5:3b"
 ```
+
+- 覆盖格式：逗号分隔的 `key=value`（值可含空格与 `=`；含逗号的值请走场景文件或
+  `dshCommand`）。DSH 适配器消费的键：`dshArgs`（额外 CLI 参数，空白分隔）、
+  `env.KEY`（子进程环境变量）；`dshCommand`/`timeoutSec`/`workdir` 等既有键同样可覆盖。
+- **审计钩子**：每个 run 打印并落库 trace 实测模型（`request/context` → MODEL_CALL 属性，
+  `observedModel`），覆盖项本身存入评测 metadata（`sideOverrides`）——门禁结论可对照
+  `show --run RUN_ID` 逐条审计，杜绝"以为换了模型其实没换"。
+- 这是"真 Agent 退化候选被门禁拒绝"负路径的实现通道：baseline 用大模型、candidate 用
+  小模型/更差配置，同一场景集 × 同 repeats，pass^k 下降即 exit 1。
 
 ## 模式三：实时评测（--live）
 

@@ -31,7 +31,9 @@ import java.util.Optional;
  *   runs(id, task_id, agent, status, final_answer, started_at, duration_ms,
  *        total_tokens, error)
  *   events(run_id, seq, type, name, attributes_json, timestamp, duration_ms)
- *   evaluations(run_id, task_id, agent, agent_version, started_at, results_json)
+ *   evaluations(run_id, task_id, agent, agent_version, started_at, results_json,
+ *        metadata_json) - metadata carries audit fields such as per-side compare
+ *        overrides and the observed model; older stores are migrated in place.
  */
 public final class SqliteRunStore implements AutoCloseable {
     private final Connection conn;
@@ -79,9 +81,25 @@ public final class SqliteRunStore implements AutoCloseable {
                         started_at TEXT NOT NULL,
                         results_json TEXT NOT NULL
                     )""");
+            ensureEvaluationMetadataColumn();
         } catch (SQLException e) {
             throw new IOException("cannot open sqlite run store: " + file, e);
         }
+    }
+
+    /**
+     * In-place migration: stores created before evaluation metadata persistence
+     * lack the metadata_json column. ALTER TABLE keeps every existing row intact.
+     */
+    private void ensureEvaluationMetadataColumn() throws SQLException {
+        ResultSet rs = conn.createStatement().executeQuery("PRAGMA table_info(evaluations)");
+        boolean hasMetadata = false;
+        while (rs.next()) {
+            if ("metadata_json".equalsIgnoreCase(rs.getString("name"))) { hasMetadata = true; break; }
+        }
+        rs.close();
+        if (!hasMetadata)
+            conn.createStatement().executeUpdate("ALTER TABLE evaluations ADD COLUMN metadata_json TEXT");
     }
 
     /** Persists a full run with its trace events. */
@@ -123,17 +141,21 @@ public final class SqliteRunStore implements AutoCloseable {
         }
     }
 
-    /** Persists the evaluation outcome attached to a run. */
+    /** Persists the evaluation outcome (results + audit metadata) attached to a run. */
     public synchronized void saveEvaluation(EvaluationRun evaluation) throws IOException {
         try {
-            PreparedStatement stmt = conn.prepareStatement(
-                    "INSERT OR REPLACE INTO evaluations VALUES (?,?,?,?,?,?)");
+            PreparedStatement stmt = conn.prepareStatement("""
+                    INSERT OR REPLACE INTO evaluations
+                        (run_id, task_id, agent, agent_version, started_at, results_json, metadata_json)
+                    VALUES (?,?,?,?,?,?,?)""");
             stmt.setString(1, evaluation.id());
             stmt.setString(2, evaluation.taskId());
             stmt.setString(3, evaluation.agentName());
             stmt.setString(4, evaluation.agentVersion());
             stmt.setString(5, evaluation.startedAt().toString());
             stmt.setString(6, mapper.writeValueAsString(evaluation.results()));
+            stmt.setString(7, evaluation.metadata().isEmpty()
+                    ? null : mapper.writeValueAsString(evaluation.metadata()));
             stmt.executeUpdate();
         } catch (SQLException e) {
             throw new IOException("failed to save evaluation " + evaluation.id(), e);
@@ -170,9 +192,13 @@ public final class SqliteRunStore implements AutoCloseable {
                     rs.getString("results_json"),
                     mapper.getTypeFactory().constructCollectionType(List.class,
                             com.agentlens.core.EvaluationResult.class));
+            String metadataJson = rs.getString("metadata_json");
+            Map<String, Object> metadata = metadataJson == null ? Map.of()
+                    : mapper.readValue(metadataJson,
+                            new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
             return Optional.of(new EvaluationRun(rs.getString("run_id"), rs.getString("task_id"),
                     rs.getString("agent"), rs.getString("agent_version"),
-                    Instant.parse(rs.getString("started_at")), results, Map.of()));
+                    Instant.parse(rs.getString("started_at")), results, metadata));
         } catch (SQLException e) {
             throw new IOException("failed to load evaluation " + runId, e);
         }
