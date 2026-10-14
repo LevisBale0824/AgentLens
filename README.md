@@ -85,6 +85,9 @@ AgentLensApp import --session PATH/TO/session.jsonl.zstd --judge --judge-ollama
 AgentLensApp run --scenarios PATH --otel-out output/traces.ndjson
 AgentLensApp compare --adapter dsh --candidate-override "dshArgs=--model m" --otel-endpoint http://localhost:4318/v1/traces
 
+# OTLP 接收端（P0-B）：任何 OTel 化 Agent 把 exporter 指过来，每条 trace 自动变成评测过的 run
+AgentLensApp otel-receive --port 4318 --db output/runs.db
+
 # 结构化日志（P2-5，可选）：--log-json 使 stderr 输出 NDJSON（含每次调用的 req- 请求 ID，始终回显）
 AgentLensApp run --scenarios PATH --log-json
 

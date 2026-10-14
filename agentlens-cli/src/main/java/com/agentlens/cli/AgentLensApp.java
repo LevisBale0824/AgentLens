@@ -385,12 +385,14 @@ public final class AgentLensApp {
                 case "demo" -> demo(opts);
                 case "serve" -> serve(opts);
                 case "judge-calibrate" -> judgeCalibrate(opts);
+                case "otel-receive" -> otelReceive(opts);
                 case "aiopslab-catalog" -> aiopslabCatalog(opts);
                 default -> {
                     System.err.println("unknown command: " + command);
                     System.err.println("usage: run [...] | compare --baseline B --candidate B"
                             + " [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID"
-                            + " | report [--db PATH] [--out PATH] | serve [--port N] | import --session PATH"
+                            + " | report [--db PATH] [--out PATH] | serve [--port N] | otel-receive [--port N]"
+                            + " [--db PATH] | import --session PATH"
                             + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
                             + " [--out PATH] | demo");
                     System.exit(2);
@@ -422,6 +424,11 @@ public final class AgentLensApp {
             }
             case "serve" -> {
                 int port = requireInt(opts, "port", 8080);
+                if (port < 1 || port > 65535)
+                    throw new ConfigException("port must be within 1-65535, got: " + port);
+            }
+            case "otel-receive" -> {
+                int port = requireInt(opts, "port", 4318);
                 if (port < 1 || port > 65535)
                     throw new ConfigException("port must be within 1-65535, got: " + port);
             }
@@ -575,6 +582,33 @@ public final class AgentLensApp {
         System.out.printf("dashboard: %s  (db=%s) - Ctrl+C to stop%n",
                 dashboard.baseUrl() + "/", db.toAbsolutePath());
         log.event("info", "dashboard.start", "url", dashboard.baseUrl() + "/",
+                "db", db.toAbsolutePath().toString());
+        new java.util.concurrent.CountDownLatch(1).await();
+    }
+
+    /**
+     * P0-B: OTLP/JSON ingestion - agents instrumented with OpenTelemetry point
+     * their exporter at this endpoint; each trace becomes a persisted, evaluated
+     * run (zero adapter code per new agent). Ingested runs share the store, so
+     * show/report/serve surface them like native runs.
+     */
+    private static void otelReceive(Map<String, String> opts) throws Exception {
+        Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
+        int port = requireInt(opts, "port", 4318);
+        var sqlite = new com.agentlens.eval.SqliteRunStore(db);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                sqlite.close();
+            } catch (Exception e) {
+                System.err.println("warning: failed to close sqlite store: " + e);
+            }
+        }));
+        var receiver = new OtelReceiveServer(sqlite, port);
+        receiver.start();
+        System.out.printf("otel-receive: %s/v1/traces  (db=%s) - Ctrl+C to stop%n",
+                receiver.baseUrl(), db.toAbsolutePath());
+        System.out.printf("point OTLP/HTTP exporters here (gen_ai.* / OpenInference attributes are understood)%n");
+        log.event("info", "otel.receive.start", "url", receiver.baseUrl() + "/v1/traces",
                 "db", db.toAbsolutePath().toString());
         new java.util.concurrent.CountDownLatch(1).await();
     }

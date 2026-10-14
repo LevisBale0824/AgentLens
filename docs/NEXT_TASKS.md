@@ -263,8 +263,9 @@ P2 LLM Judge / Web UI / 外部集成
 按优先级排列的待吸收项：
 
 - **P0**：
-  - ⬜ `otel-receive` OTLP/JSON 接收端（traceId 聚合→统一 Trace→自动评测→落库；属性对齐
-    OTel GenAI 语义约定与 OpenInference；业界两家平台均原生接入 OTLP，我们目前只有导出侧）。
+  - ✅ `otel-receive` OTLP/JSON 接收端（P0-B，ROADMAP 7.10）：traceId 聚合→统一 Trace→
+    确定性自动评测→落库；agentlens.*/OTel GenAI/OpenInference 三层约定；真机冒烟通过
+    （外部 trace→run→show 可查）。
   - ✅ 标定语料文件化 + mock 行为扩充（P0-A，ROADMAP 7.8）：`correct_detailed` +
     `wrong_conclusion`/`fabricated_evidence`/`partial_evidence` 边界行为 +
     `judge-calibrate --corpus data/judge-calibration-corpus.json`（版本化；10 条样例 = 2 正例 +

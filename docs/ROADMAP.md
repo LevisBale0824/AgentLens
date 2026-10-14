@@ -540,6 +540,33 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
 - **测试**:6 个单测(stub judge,无 LLM)覆盖通过合并/单指标失败/部分降级/全部降级/
   子集选择/未知指标拒绝。真机冒烟:qwen2.5:7b 判定参与门禁(其严格性与 7.8 标定一致)。
 
+### 7.10 P0-B 接收端: OTLP/JSON ingestion(已落地)
+
+`AgentLensApp otel-receive [--port N] [--db PATH]`(默认 4318=OTLP/HTTP 标准端口)——
+**每加一个 OTel 化 Agent 零代码接入**:任何语言/框架的 Agent(OTel javaagent、
+OpenLLMetry、OpenInference 自动埋点)把 OTLP/HTTP exporter 指到本端点,每条 trace 即成为
+落库+自动评测的 run,与原生 run 共享 show/report/serve 全链路:
+
+- **`OtlpIngestMapper`(core)**:`OtelSpanMapper` 的逆映射——traceId 聚合为 run(根 span
+  =run,其余 span 按开始序→事件;根判定不依赖 payload 内顺序)。约定三层:
+  ① `agentlens.*` 原生回程(run/task id、final answer、token、事件名与属性前缀剥离);
+  ② OTel GenAI 语义约定(`gen_ai.usage.prompt_tokens`/`completion_tokens` 求和入
+  totalTokens、`gen_ai.request.model` 命名 MODEL_CALL);
+  ③ OpenInference(`llm.token_count.*` 同样求和、generation/retriever span 名映射);
+  未识别属性原样保留(不丢遥测);未知 span 名按 kind 兜底(CLIENT/PRODUCER→TOOL_CALL,
+  其余→PLAN);span status error→ERROR 事件+message 入 error 属性,根 span error→
+  run FAILED。未知属性数值解析容错(intValue 字符串→Long,坏值降级字符串)。
+- **`OtelReceiveServer`(cli)**:POST `/v1/traces`(OTLP/JSON,400 带原因/405/32MB 上限),
+  GET `/` 返回约定说明卡;ingest 即评:确定性评测器(task-completion + run-limits,
+  合成 task 给宽松 maxSteps=50)+落库,agentName 取 resource `service.name`(外部 Agent
+  以自己的服务名出现在看板),metadata 标 `ingest=otlp`。
+- **测试**:5 单测(原生往返含 FAILED/error、外部 gen_ai trace 含乱序根 span、
+  token 求和、span 级 error 映射、畸形 payload 拒绝)+4 服务器端到端(200/入库/
+  评测存在/400/405/info 卡)。真机冒烟:py-agent-demo 外部 trace→run
+  (tokens 165=120+45,MODEL_CALL=qwen2.5:7b,ERROR 事件)→确定性评测→show 可查。
+- **业界对齐**:OTLP 原生接入是 Langfuse/Phoenix 的共同底座;我们做 OTLP/JSON 起步
+  (两家 HTTP 栈均支持),gRPC(4317)为后续可选。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
