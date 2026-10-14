@@ -3,7 +3,9 @@ package com.agentlens.eval;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -60,6 +62,19 @@ class ScenarioLoaderTest {
         assertEquals("do it", task.instruction());
         assertEquals("D:/tmp/x", task.context().get("workdir"));
         assertFalse(task.context().containsKey("alert"));
+    }
+
+    @Test
+    void boundaryCalibrationBehaviorsAccepted() {
+        // Board P0-A: the four judge-calibration boundary behaviors are valid
+        // scenario behaviors (they drive the mock agent's judge-facing answers).
+        var loader = new ScenarioLoader();
+        for (String behavior : List.of("correct_detailed", "wrong_conclusion",
+                "fabricated_evidence", "partial_evidence")) {
+            var json = "[" + scenarioJson("b-" + behavior)
+                    .replace("\"correct\"", "\"" + behavior + "\"") + "]";
+            assertDoesNotThrow(() -> loader.load(writeTemp(json)));
+        }
     }
 
     private static String scenarioJson(String id) {

@@ -510,6 +510,21 @@ K8sGPT 作为第二个外部被测 Agent 的接入验证(诊断型 Agent,与 AIO
   (机器可读,含逐样本 reason);结构化日志 `judge.calibrated`。
 - 退出码语义:标定是测量不是门禁,恒 0;是否达标由人根据 kappa 阈值判断。
 
+**P0-A 语料文件化(已落地)**:`judge-calibrate --corpus data/judge-calibration-corpus.json`
+加载版本化语料(`{"version":N,"entries":[{id,behavior,expectedPass,instruction,context}]}`,
+`CorpusLoader` eval 模块,结构校验+行为白名单+语料版本写入结果 JSON)。语料从 6 行为扩展到
+10 条样例/9 类行为,新增 4 个**判卷边界行为**(对标业界"对抗样本共识"——判卷员只会说 PASS 的
+语料训不出辨别力):
+
+- `correct_detailed`——证据丰满的正例:答案引用每个探针的真实读数+根因+处置建议
+  (回应 qwen2.5:7b 对薄罐头答案敏感度 0 的 T6 发现)。
+- `wrong_conclusion`——证据真实但结论与之矛盾(推理缺陷,faithfulness 应抓)。
+- `fabricated_evidence`——引用 trace 中不存在的工具调用(幻觉缺陷,hallucination 应抓)。
+- `partial_evidence`——只跑 1 个探针却声称"全面排查"(完整性缺陷:断言超出证据)。
+
+详见 `data/judge-calibration-corpus.json`(2 正例 + 8 负例);无 `--corpus` 时保持旧
+6 行为默认路径(向后兼容)。
+
 ### 7.9 P2-1 扩展: DeepEval 风格指标适配器(阶段一已落地)
 
 `DeepEvalAdapter`(eval)——DeepEval 三大经典质量指标映射到统一 Trace 域,跑在与

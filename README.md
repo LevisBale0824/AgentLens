@@ -90,6 +90,9 @@ AgentLensApp run --scenarios PATH --log-json
 
 # Judge 标定（P2-1）：mock 行为语料 × 本地 judge 模型，输出 accuracy/precision/recall/F1/kappa
 AgentLensApp judge-calibrate --judge --samples 2 --out output/judge-calibration.json
+# 版本化语料（P0-A）：--corpus 加载 data/judge-calibration-corpus.json（含 correct_detailed /
+# wrong_conclusion / fabricated_evidence / partial_evidence 边界行为，语料版本写入结果）
+AgentLensApp judge-calibrate --judge --corpus data/judge-calibration-corpus.json --samples 1
 
 # 静态分析门禁（P2-5）：Checkstyle + SpotBugs 双检（CI 的 quality 作业同款）
 mvn -Pquality verify

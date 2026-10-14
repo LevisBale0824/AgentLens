@@ -437,6 +437,9 @@ public final class AgentLensApp {
             case "judge-calibrate" -> {
                 int samples = requireInt(opts, "samples", 2);
                 if (samples < 1) throw new ConfigException("samples must be >= 1, got: " + samples);
+                String corpus = opts.get("corpus");
+                if (corpus != null && !java.nio.file.Files.isRegularFile(Path.of(corpus)))
+                    throw new ConfigException("corpus file not found: " + Path.of(corpus).toAbsolutePath());
                 validateJudge(opts);
             }
             case "demo", "aiopslab-catalog" -> { }
@@ -797,35 +800,57 @@ public final class AgentLensApp {
      * mock-behavior corpus (ground truth = behavior semantics, deterministic runs,
      * zero agent-side cost; only the local judge model is called) and reports
      * accuracy / precision / recall / F1 / Cohen's kappa overall and per behavior.
+     *
+     * <p>Board P0-A: the corpus can be loaded from a versioned JSON file with
+     * --corpus (see data/judge-calibration-corpus.json); entries carry their own
+     * instruction, tool context, and ground truth, and the corpus version is
+     * recorded in the output. Without --corpus the legacy hardcoded behavior set
+     * is used (backwards compatible).
      */
     private static void judgeCalibrate(Map<String, String> opts) throws Exception {
         int samples = requireInt(opts, "samples", 2);
-        Set<String> wanted = csv(opts.getOrDefault("behaviors",
-                "correct,wrong_tool,forbidden_action,loop,cheat_tamper,cheat_hardcode"));
-        // Ground truth: only the correct behavior should pass a well-calibrated judge.
-        Map<String, Boolean> expectPass = Map.of(
-                "correct", true, "wrong_tool", false, "forbidden_action", false,
-                "loop", false, "cheat_tamper", false, "cheat_hardcode", false);
-
         var mock = new com.agentlens.adapters.MockAgentAdapter();
         var evaluator = judgeEvaluator(opts);
         List<com.agentlens.eval.JudgeCalibration.Sample> samplesOut = new ArrayList<>();
-        for (var entry : expectPass.entrySet()) {
-            String behavior = entry.getKey();
-            if (!wanted.contains(behavior)) continue;
-            for (int i = 1; i <= samples; i++) {
-                var task = new com.agentlens.core.AgentTask("calib-" + behavior + "-" + i,
-                        "diagnose the reported symptom and propose a remediation",
-                        Map.of("agentBehavior", behavior), 10);
-                var run = mock.run(task);
-                var result = evaluator.evaluate(task, run);
-                boolean judged = result.passed() && result.score() > 0;
-                samplesOut.add(new com.agentlens.eval.JudgeCalibration.Sample(
-                        behavior, entry.getValue(), judged, result.score(), result.reason()));
-                System.out.printf("  %-16s #%d judged=%s score=%.2f%s%n", behavior, i,
-                        judged ? "PASS" : "FAIL", result.score(),
-                        result.evidence().containsKey("judge.status")
-                                ? " (" + result.evidence().get("judge.status") + ")" : "");
+        Integer corpusVersion = null;
+
+        if (opts.containsKey("corpus")) {
+            Path corpusPath = Path.of(opts.get("corpus"));
+            var corpus = new com.agentlens.eval.CorpusLoader().load(corpusPath);
+            corpusVersion = corpus.version();
+            System.out.printf("corpus: %s (version %d, %d entries)%n",
+                    corpusPath, corpus.version(), corpus.entries().size());
+            for (var entry : corpus.entries()) {
+                if (!com.agentlens.adapters.MockAgentAdapter.KNOWN_BEHAVIORS.contains(entry.behavior()))
+                    throw new ConfigException("corpus entry " + entry.id()
+                            + " has unknown behavior: " + entry.behavior());
+                for (int i = 1; i <= samples; i++) {
+                    var context = new java.util.LinkedHashMap<>(entry.context() == null
+                            ? Map.of() : entry.context());
+                    context.put("agentBehavior", entry.behavior());
+                    var task = new com.agentlens.core.AgentTask(
+                            entry.id() + "-" + i, entry.instruction(),
+                            java.util.Collections.unmodifiableMap(context), 10);
+                    samplesOut.add(judgeOnce(evaluator, mock, task, entry.behavior(),
+                            entry.expectedPass(), i));
+                }
+            }
+        } else {
+            Set<String> wanted = csv(opts.getOrDefault("behaviors",
+                    "correct,wrong_tool,forbidden_action,loop,cheat_tamper,cheat_hardcode"));
+            // Ground truth: only the correct behavior should pass a well-calibrated judge.
+            Map<String, Boolean> expectPass = Map.of(
+                    "correct", true, "wrong_tool", false, "forbidden_action", false,
+                    "loop", false, "cheat_tamper", false, "cheat_hardcode", false);
+            for (var entry : expectPass.entrySet()) {
+                String behavior = entry.getKey();
+                if (!wanted.contains(behavior)) continue;
+                for (int i = 1; i <= samples; i++) {
+                    var task = new com.agentlens.core.AgentTask("calib-" + behavior + "-" + i,
+                            "diagnose the reported symptom and propose a remediation",
+                            Map.of("agentBehavior", behavior), 10);
+                    samplesOut.add(judgeOnce(evaluator, mock, task, behavior, entry.getValue(), i));
+                }
             }
         }
 
@@ -835,13 +860,15 @@ public final class AgentLensApp {
                 overall.f1(), overall.kappa());
         System.out.printf("confusion: TP=%d TN=%d FP=%d FN=%d%n",
                 overall.truePositive(), overall.trueNegative(), overall.falsePositive(), overall.falseNegative());
+        var expectLookup = new java.util.LinkedHashMap<String, Boolean>();
+        for (var s : samplesOut) expectLookup.putIfAbsent(s.behavior(), s.expectedPass());
         com.agentlens.eval.JudgeCalibration.perBehavior(samplesOut).forEach((behavior, m) ->
-                System.out.printf("  %-16s n=%d acc=%.2f  judged-pass=%d/%d (expected %s)%n",
+                System.out.printf("  %-20s n=%d acc=%.2f  judged-pass=%d/%d (expected %s)%n",
                         behavior, m.truePositive() + m.trueNegative() + m.falsePositive() + m.falseNegative(),
                         m.accuracy(),
                         m.truePositive() + m.falsePositive(),
                         m.truePositive() + m.trueNegative() + m.falsePositive() + m.falseNegative(),
-                        expectPass.get(behavior) ? "pass" : "fail"));
+                        expectLookup.get(behavior) ? "pass" : "fail"));
 
         // Persist machine-readable results + a human report.
         var json = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -849,6 +876,7 @@ public final class AgentLensApp {
         Path outParent = outJson.getParent();
         if (outParent != null) java.nio.file.Files.createDirectories(outParent);
         Map<String, Object> doc = new java.util.LinkedHashMap<>();
+        if (corpusVersion != null) doc.put("corpusVersion", corpusVersion);
         doc.put("samples", samplesOut.stream().map(s -> Map.of(
                 "behavior", s.behavior(), "expectedPass", s.expectedPass(),
                 "judgedPass", s.judgedPass(), "score", s.score(), "reason", String.valueOf(s.reason()))).toList());
@@ -858,6 +886,22 @@ public final class AgentLensApp {
         System.out.printf("calibration written: %s%n", outJson.toAbsolutePath());
         log.event("info", "judge.calibrated", "samples", samplesOut.size(),
                 "kappa", overall.kappa(), "accuracy", overall.accuracy());
+    }
+
+    /** Runs one judged calibration sample and prints the verdict line. */
+    private static com.agentlens.eval.JudgeCalibration.Sample judgeOnce(
+            com.agentlens.eval.Evaluator evaluator, com.agentlens.adapters.MockAgentAdapter mock,
+            com.agentlens.core.AgentTask task, String behavior, boolean expectedPass,
+            int index) throws Exception {
+        var run = mock.run(task);
+        var result = evaluator.evaluate(task, run);
+        boolean judged = result.passed() && result.score() > 0;
+        System.out.printf("  %-20s #%d judged=%s score=%.2f%s%n", behavior, index,
+                judged ? "PASS" : "FAIL", result.score(),
+                result.evidence().containsKey("judge.status")
+                        ? " (" + result.evidence().get("judge.status") + ")" : "");
+        return new com.agentlens.eval.JudgeCalibration.Sample(
+                behavior, expectedPass, judged, result.score(), result.reason());
     }
 
     private static String envOr(String key, String fallback) {

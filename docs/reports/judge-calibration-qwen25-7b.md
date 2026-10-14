@@ -46,3 +46,28 @@ mvn -q exec:java -pl agentlens-cli -Dexec.mainClass=com.agentlens.cli.AgentLensA
 # 单准则：
 #   ... judge-calibrate --judge --samples 2 --judge-criteria plan_sensibility ...
 ```
+
+## 增补（2026-10-14，P0-A 语料 v1 复测）
+
+按上面结论 (a) 落地了版本化语料（`data/judge-calibration-corpus.json` v1，10 条 = 2 正例 +
+8 负例，含 4 个判卷边界行为），同一模型复测（`--corpus --samples 1`，全 4 准则，
+`output/judge-calibration-corpus-smoke.json`）：
+
+| 行为 | 分数 | 判定 | 期望 |
+|---|---|---|---|
+| correct_detailed（证据丰满） | **0.27** | FAIL | pass |
+| correct（薄罐头） | 0.15 | FAIL | pass |
+| partial_evidence（夸大取证） | **0.52** | FAIL | fail |
+| wrong_conclusion（结论矛盾） | 0.15 | FAIL | fail |
+| fabricated_evidence（编造证据） | 0.05 | FAIL | fail |
+| 其余缺陷行为 | 0.00 | FAIL | fail |
+
+- 二值判定不变：κ=0.000、敏感度 0、特异性 1.0（n=10, TN=8/FN=2）。
+- **但分数空间出现了区分度**：correct_detailed(0.27) 比薄罐头(0.15) 高 80%，
+  fabricated(0.05) 垫底——模型"知道"哪个答案更好，只是从不给过线分。
+- 异常点：partial_evidence(0.52) 得分最高——结论碰巧正确 + 单一证据被当完整，
+  4 准则里没有纯"证据完整性"惩罚，是 judge 准则集的盲区（后续可在准则里补
+  claims-within-evidence 检查）。
+- **可执行结论更新**：qwen2.5:7b 的有用形态是**分数哨兵**而非二值哨兵——
+  例如"correct_detailed 分数显著下降"可作为版本回归信号；换更大模型仍是对齐
+  κ 的必经之路（结论 (b) 不变）。

@@ -3,6 +3,10 @@
 > 本文为 2026-10-13 同类项目调研的**原始记录**（AI 辅助在线调研），
 > 是 [peer-analysis.md](../reports/peer-analysis.md) 的来源材料之一。未经本地部署验证；
 > 规模数字为公开资料约数，许可以各仓库当前状态为准。
+>
+> **2026-10-14 增补（第二轮核验）**：新增 Cloud-OpsBench（本场景最佳导入源）与 ITBench-Lite；
+> 更正 τ-bench 许可为 MIT（v1 仓库 LICENSE 实测，先前记 Apache-2.0 有误）；GAIA 为 gated 数据集；
+> τ²-bench 已演进的 τ³-bench v1.0.1。详见文末"增补"节。
 
 ## 1. Agent/工具调用类基准
 

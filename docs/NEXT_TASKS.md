@@ -265,9 +265,10 @@ P2 LLM Judge / Web UI / 外部集成
 - **P0**：
   - ⬜ `otel-receive` OTLP/JSON 接收端（traceId 聚合→统一 Trace→自动评测→落库；属性对齐
     OTel GenAI 语义约定与 OpenInference；业界两家平台均原生接入 OTLP，我们目前只有导出侧）。
-  - ⬜ 标定语料文件化 + mock 行为扩充：`correct_detailed`（证据丰满答案模板）+
-    `wrong_conclusion`/`fabricated_evidence`/`partial_evidence` 三类边界行为 +
-    `judge-calibrate --corpus data/judge-calibration-corpus.json`（版本化，回应 qwen2.5:7b κ=0）。
+  - ✅ 标定语料文件化 + mock 行为扩充（P0-A，ROADMAP 7.8）：`correct_detailed` +
+    `wrong_conclusion`/`fabricated_evidence`/`partial_evidence` 边界行为 +
+    `judge-calibrate --corpus data/judge-calibration-corpus.json`（版本化；10 条样例 = 2 正例 +
+    8 负例，CorpusLoader 6 单测 + mock 行为 5 新单测）。
   - ⬜ Dashboard 基线/候选**逐用例 diff**（pass↔fail 高亮 + judge 理由列 + 失败用例 trace 下钻；
     对标 promptfoo Compare / Langfuse Compare Experiments）。
   - ⬜ CI 门禁契约细化：质量回归与工具错误退出码分离（promptfoo 100/1 模式）+
