@@ -88,3 +88,49 @@
 - SWE-bench: github.com/princeton-nlp/SWE-bench (MIT)
 - AIOpsLab: github.com/microsoft/AIOpsLab (MIT, 已接入)
 - DeepEval/Ragas/promptfoo 合成工作流：各自官方 docs
+
+## 增补（2026-10-14 第二轮核验，来源：api.github.com / huggingface.co / arXiv 实测）
+
+### ⭐⭐⭐ Cloud-OpsBench（本场景最佳导入源，优先级高于一切基准）
+
+- github.com/LLM4Ops/Cloud-OpsBench（MIT 实测）+ HF `LLM4Ops/Cloud-OpsBench`（MIT，未门控）；论文 arXiv:2603.00468
+- **内容**：754 个 K8s 微服务 RCA 故障案例 / 57 类故障——Online Boutique 550 + Train-Ticket 204；
+  故障类别覆盖 admission / scheduling / startup / runtime / service routing / performance / infrastructure / code defect。
+- **快照范式（"Freezing the Crime Scene"，FSE 2026）**：**无需活集群**——每个案例存集群状态快照
+  （alert.json / k8s_states.json / logs.json）+ `tool_cache.json`（诊断工具调用的确定性回放）+ 代码快照
+  + 每案例 2 条 golden trajectory + 进程标注（证据里程碑、RAR 冗余动作率）+ MCP server 暴露诊断工具。
+- **映射**：`metadata.json = {namespace, query, difficulty, result{fault_taxonomy, fault_object, root_cause}}`
+  → query=instruction、快照=context、result=expected、tool_cache=mock 工具注册表——**几乎 1:1 对上
+  AgentLens 的 {id, instruction, context, expected} 场景格式与 mock Agent**，导入难度极低。
+- **对 AgentLens 的意义**：T8（kind 集群）被搁置的情况下，这是拿到"真 K8s 故障场景"的捷径——
+  754 个真实故障案例的快照回放可以直接喂给 dsh/import 路径或新 adapter，无需任何集群。
+
+### ITBench / ITBench-Lite（IBM）
+
+- github.com/itbench-hub/ITBench（框架）+ HF `ibm-research/ITBench-Lite`（Apache-2.0，未门控）；
+  论文 arXiv:2502.05352（ICML 2025 oral）；初版 94 个真实场景（SRE/CISO/FinOps；SOTA Agent 仅解出
+  13.8% SRE / 25.2% CISO / 0% FinOps）。
+- Lite 行格式（实测）：`{scenario_id, domain, version, task_type, snapshot_data}`；SRE 流 = 故障注入
+  K8s → 告警 → Agent 输出 fault group / fault mechanism / root cause。
+- 注意：自托管评测需真实 K8s（k3s/OCM）；社区 trajectory 产物有 CC-BY-NC-4.0，按文件核对许可。
+
+### 基准条目更正
+
+- **τ-bench 许可为 MIT**（v1 仓库 LICENSE 实测；先前记 Apache-2.0 有误）；τ²-bench 现为
+  **τ³-bench v1.0.1**（MIT）；v1 实测规模 retail 115 / airline 50（tasks_test.py 计数）；
+  τ²/τ³ base：airline 50 / retail 114 / telecom 114（telecom full=2285, small=20）。
+- **GAIA 是 gated 数据集**（HF 要求登录+条款接受）；466 题规模确认。
+- **BFCL**：gorilla 仓库 README 声明数据 Apache-2.0（先前记 CC-BY-4.0 与 README 冲突，以仓库为准）；
+  v4 Agentic 类别（web_search/memory/format_sensitivity）含 **irrelevance 负例**——judge 标定的
+  现成对抗样本。
+- **AIOpsLab 定位修正**：它是框架/编排器（~80 个 problem 实例，detect/localize/analyze/mitigate 四任务型），
+  不是静态数据集——作为**场景分类学设计参考**价值最大，不可直接导入数据。
+- AgentBench 现为 Docker 化 "AgentBench FC"（2025-10）：alfworld/dbbench/knowledgegraph/os_interaction/webshop。
+
+### 导入路线建议（更新）
+
+1. **Cloud-OpsBench 先行**（754 案例、MIT、快照回放、1:1 格式映射）——一次性解决"真实故障语料"与
+   "mock 工具回放"两个缺口；
+2. τ-bench/τ³ base 分裂做政策约束场景（ComplianceEvaluator）；
+3. BFCL 单轮 + irrelevance 负例做工具调用级 golden（judge 标定对抗样本）；
+4. 语料规模对齐 Ragas judge-alignment 指引：每 judge 维度 100-200 条专家标注（含 FP/FN 边界）。
