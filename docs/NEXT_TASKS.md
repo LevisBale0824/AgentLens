@@ -257,6 +257,31 @@ P2 LLM Judge / Web UI / 外部集成
   min∘max 死代码等），CI 新增 quality 作业先行把关。
 - ⬜ 日志级别过滤与文件输出（可选）。
 
+## 借鉴落地清单（2026-10 深度调研，详见 docs/reports/peer-analysis.md）
+
+对 6 个同类开源项目（Langfuse/Phoenix/promptfoo/DeepEval/TruLens/Inspect AI）+ 公共评测集的调研结论，
+按优先级排列的待吸收项：
+
+- **P0**：
+  - ⬜ `otel-receive` OTLP/JSON 接收端（traceId 聚合→统一 Trace→自动评测→落库；属性对齐
+    OTel GenAI 语义约定与 OpenInference；业界两家平台均原生接入 OTLP，我们目前只有导出侧）。
+  - ⬜ 标定语料文件化 + mock 行为扩充：`correct_detailed`（证据丰满答案模板）+
+    `wrong_conclusion`/`fabricated_evidence`/`partial_evidence` 三类边界行为 +
+    `judge-calibrate --corpus data/judge-calibration-corpus.json`（版本化，回应 qwen2.5:7b κ=0）。
+  - ⬜ Dashboard 基线/候选**逐用例 diff**（pass↔fail 高亮 + judge 理由列 + 失败用例 trace 下钻；
+    对标 promptfoo Compare / Langfuse Compare Experiments）。
+  - ⬜ CI 门禁契约细化：质量回归与工具错误退出码分离（promptfoo 100/1 模式）+
+    `approved-baseline.json` 门禁工件固定 dataset/评测器版本（Langfuse 双发布策略）。
+- **P1**：分数三来源模型（judge/人工/外部 API 统一挂 run）+ 人工复核队列；存原始 k 次分数、
+  pass@k/pass^k/at_least_k 事后重算（Inspect epochs 模式）；p50/p95/成本时间序列；trace 瀑布图；
+  断言代数（`not-` 反转/单条权重/assert-set k-of-n）；scorer 契约 {value, answer, explanation, reason}。
+- **P2**：`bfcl-import`（BFCL 期望调用序列→Scenario）；τ-bench 政策场景→ComplianceEvaluator 用例；
+  语料合成工作流（文档→LLM 生成→人工筛选固化）；Dashboard 静态 bundle 导出（PR 工件）；
+  部位级 judge 绑定；失败 run 聚类；原生 DeepEval subprocess 阶段二（G-Eval/DAG）。
+
+**差异化确认**：pass^k 发版门禁 + 诊断证据链在调研范围内仍无平台级同类；Inspect AI 的 `pass_k_k`
+是打分归约器而非发布闸门。保持并强化这一优势，同时补齐 OTLP 接入与对比展示两块最大缺口。
+
 ## 当前最应该做的 5 件事
 
 如果只能从少量任务开始，按以下顺序执行：
