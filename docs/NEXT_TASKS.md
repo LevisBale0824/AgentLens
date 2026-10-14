@@ -282,6 +282,12 @@ P2 LLM Judge / Web UI / 外部集成
 - **P1**：分数三来源模型（judge/人工/外部 API 统一挂 run）+ 人工复核队列；存原始 k 次分数、
   pass@k/pass^k/at_least_k 事后重算（Inspect epochs 模式）；p50/p95/成本时间序列；trace 瀑布图；
   断言代数（`not-` 反转/单条权重/assert-set k-of-n）；scorer 契约 {value, answer, explanation, reason}。
+- **P1（新，2026-10-14 立项）看板 UI 导入历史数据**：拖入 session.jsonl(.zstd)/OTLP NDJSON/AIOpsLab
+  JSON → `/api/import` 自动探测类型 → 评测落库（source=ui-import）→ 直接进 runs 列表与逐用例 diff。
+  设计与里程碑（M1 导入闭环 / M2 瀑布时间线+工件查看 / M3 trace 建场景+标注）见
+  [ui-history-analysis-plan.md](reports/ui-history-analysis-plan.md)，交互原型
+  [docs/prototypes/ui-history-analysis.html](../prototypes/ui-history-analysis.html)。
+  竞品参照：Jaeger trace JSON 上传、Inspect/promptfoo 本地 viewer、LangSmith "add to dataset"。
 - **P2**：`bfcl-import`（BFCL 期望调用序列→Scenario）；τ-bench 政策场景→ComplianceEvaluator 用例；
   语料合成工作流（文档→LLM 生成→人工筛选固化）；Dashboard 静态 bundle 导出（PR 工件）；
   部位级 judge 绑定；失败 run 聚类；原生 DeepEval subprocess 阶段二（G-Eval/DAG）。

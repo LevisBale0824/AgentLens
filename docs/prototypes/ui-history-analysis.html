@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentLens · 历史数据分析 UI 原型</title>
+<style>
+  :root{
+    --bg:#0b101b; --bg2:#0d1322; --panel:#131a2a; --panel2:#182138; --line:#1f2a44; --line2:#2a3a5e;
+    --text:#e6ebf5; --dim:#8ea0bf; --dim2:#5c6c8c;
+    --ok:#34d399; --ok-bg:#0e3b2e; --warn:#fbbf24; --warn-bg:#3d3317; --bad:#f87171; --bad-bg:#432424;
+    --accent:#60a5fa; --accent-bg:#12233f; --violet:#a78bfa; --teal:#2dd4bf;
+    --mono:"Cascadia Code","JetBrains Mono",Consolas,"Courier New",monospace;
+    --sans:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.65 var(--sans);
+    background-image:
+      radial-gradient(ellipse 80% 50% at 70% -10%, rgba(96,165,250,.06), transparent),
+      linear-gradient(rgba(31,42,68,.35) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(31,42,68,.35) 1px, transparent 1px);
+    background-size:100% 100%, 44px 44px, 44px 44px;}
+  ::selection{background:rgba(96,165,250,.35)}
+
+  header{display:flex;align-items:center;gap:14px;padding:16px 26px;border-bottom:1px solid var(--line);
+    background:rgba(13,19,34,.85);backdrop-filter:blur(6px);position:sticky;top:0;z-index:20}
+  .logo{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:16px;
+    background:linear-gradient(135deg,var(--accent-bg),var(--panel2));border:1px solid var(--line2);
+    box-shadow:0 0 18px rgba(96,165,250,.25)}
+  h1{margin:0;font-size:17px;letter-spacing:.04em}
+  h1 small{color:var(--dim);font-weight:400;font-size:12px;margin-left:10px;letter-spacing:0}
+  .badge{font:11px/1 var(--mono);padding:5px 10px;border-radius:99px;letter-spacing:.12em}
+  .badge.proto{color:var(--warn);background:var(--warn-bg);border:1px solid rgba(251,191,36,.3)}
+  .legend{margin-left:auto;display:flex;gap:14px;font:11px var(--mono);color:var(--dim)}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+
+  nav{display:flex;gap:4px;padding:10px 26px 0;border-bottom:1px solid var(--line);background:var(--bg2)}
+  nav button{background:none;border:none;color:var(--dim);font:13px var(--sans);padding:9px 16px;cursor:pointer;
+    border-bottom:2px solid transparent;letter-spacing:.03em}
+  nav button:hover{color:var(--text)}
+  nav button.on{color:var(--accent);border-bottom-color:var(--accent)}
+  nav button.m3{color:var(--dim2);cursor:not-allowed}
+
+  main{max-width:1180px;margin:0 auto;padding:22px 26px 60px}
+  .stage{display:none} .stage.on{display:block;animation:reveal .45s ease both}
+  @keyframes reveal{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  h2{font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:.14em;margin:26px 0 10px;
+    display:flex;align-items:center;gap:10px}
+  h2:first-child{margin-top:0}
+  h2 .tag{font:10px var(--mono);color:var(--accent);background:var(--accent-bg);border:1px solid rgba(96,165,250,.25);
+    padding:2px 8px;border-radius:99px;letter-spacing:.08em}
+  h2 .tag.m3{color:var(--violet);background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.25)}
+
+  /* ── dropzone ── */
+  .drop{border:1.5px dashed var(--line2);border-radius:14px;padding:34px 24px;text-align:center;cursor:pointer;
+    background:rgba(19,26,42,.5);transition:.25s;position:relative;overflow:hidden}
+  .drop:hover{border-color:var(--accent);background:rgba(18,35,63,.4)}
+  .drop.over{border-color:var(--accent);background:var(--accent-bg);box-shadow:inset 0 0 40px rgba(96,165,250,.12)}
+  .drop.over::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(-45deg,
+    rgba(96,165,250,.05) 0 12px, transparent 12px 24px)}
+  .drop .ico{font-size:26px;filter:drop-shadow(0 0 10px rgba(96,165,250,.4))}
+  .drop b{display:block;margin:8px 0 3px;font-size:15px}
+  .drop span{color:var(--dim);font-size:12.5px}
+  .drop code{font:11.5px var(--mono);color:var(--accent)}
+  .samples{display:flex;gap:8px;justify-content:center;margin-top:16px;flex-wrap:wrap}
+  .chip{display:inline-flex;align-items:center;gap:7px;font:12px var(--mono);color:var(--dim);
+    background:var(--panel);border:1px solid var(--line);padding:6px 12px;border-radius:8px;cursor:pointer;transition:.2s}
+  .chip:hover{color:var(--text);border-color:var(--accent);transform:translateY(-1px)}
+
+  .queue{display:none;margin-top:14px}
+  .queue .f{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;margin-bottom:8px;animation:reveal .3s ease both}
+  .queue .f .nm{font:12.5px var(--mono)}
+  .queue .f .sz{color:var(--dim2);font:11px var(--mono)}
+  .ftype{font:10.5px var(--mono);padding:3px 9px;border-radius:99px;letter-spacing:.06em;white-space:nowrap}
+  .ftype.dsh{color:var(--teal);background:rgba(45,212,191,.1);border:1px solid rgba(45,212,191,.3)}
+  .ftype.otlp{color:var(--accent);background:var(--accent-bg);border:1px solid rgba(96,165,250,.3)}
+  .ftype.aiopslab{color:var(--violet);background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.3)}
+  .queue select{background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:7px;
+    font:11px var(--mono);padding:4px 8px;margin-left:auto}
+  .x{color:var(--dim2);cursor:pointer;font-size:15px;padding:0 2px} .x:hover{color:var(--bad)}
+
+  .bar-btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#1d3a66,#16305a);
+    color:#dbeafe;border:1px solid rgba(96,165,250,.4);border-radius:10px;padding:11px 26px;font:600 13.5px var(--sans);
+    letter-spacing:.05em;cursor:pointer;margin-top:14px;box-shadow:0 2px 14px rgba(96,165,250,.18);transition:.2s}
+  .bar-btn:hover{transform:translateY(-1px);box-shadow:0 4px 20px rgba(96,165,250,.3)}
+  .bar-btn:disabled{opacity:.45;cursor:wait;transform:none}
+
+  .results{display:none;margin-top:18px}
+  .rcard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;
+    padding:14px 18px;margin-bottom:10px;animation:reveal .4s ease both}
+  .rcard .h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .rcard .h .nm{font:600 13px var(--sans)}
+  .rcard .h .sz{color:var(--dim2);font:11px var(--mono)}
+  .rrun{display:flex;align-items:center;gap:10px;font:12px var(--mono);color:var(--dim);
+    padding:7px 0 0 14px;border-top:1px dashed var(--line);margin-top:8px;flex-wrap:wrap}
+  .rrun code{color:var(--accent)}
+  .pill{padding:1px 9px;border-radius:99px;font-size:11px;font-weight:600}
+  .pill.ok{color:var(--ok);background:var(--ok-bg)} .pill.bad{color:var(--bad);background:var(--bad-bg)}
+  .pill.warn{color:var(--warn);background:var(--warn-bg)} .pill.dim{color:var(--dim);background:var(--panel2)}
+  .pill.src{color:var(--teal);background:rgba(45,212,191,.1);border:1px solid rgba(45,212,191,.25)}
+
+  /* ── runs table ── */
+  .filters{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+  .fchip{font:11.5px var(--mono);color:var(--dim);background:var(--panel);border:1px solid var(--line);
+    border-radius:99px;padding:5px 13px;cursor:pointer;transition:.15s}
+  .fchip:hover{color:var(--text)} .fchip.on{color:var(--accent);border-color:var(--accent);background:var(--accent-bg)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;overflow:hidden}
+  th,td{padding:9px 13px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}
+  th{color:var(--dim);font-weight:600;font-size:11.5px;letter-spacing:.06em}
+  tr:last-child td{border-bottom:none} tbody tr{cursor:pointer;transition:.12s} tbody tr:hover{background:var(--panel2)}
+  tr.ui td:first-child{box-shadow:inset 3px 0 0 var(--teal)}
+  code.id{font:12px var(--mono);color:var(--accent)}
+  td code{font:12px var(--mono)}
+  .muted{color:var(--dim)} .dim2{color:var(--dim2)}
+
+  /* ── detail / waterfall ── */
+  #detail{display:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:18px 22px;margin-top:14px;animation:reveal .35s ease both}
+  .dt-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .dt-h h3{margin:0;font:600 15px var(--sans)}
+  .dt-h .meta{color:var(--dim);font:12px var(--mono);margin-left:auto}
+  .tgl{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:14px}
+  .tgl button{background:none;border:none;color:var(--dim);font:11.5px var(--mono);padding:5px 12px;cursor:pointer}
+  .tgl button.on{background:var(--accent-bg);color:var(--accent)}
+  .wf{margin-top:14px}
+  .wf .lane{display:grid;grid-template-columns:170px 1fr;gap:12px;align-items:center;padding:4px 0}
+  .wf .lbl{font:11.5px var(--mono);color:var(--dim);text-align:right;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .wf .lbl b{color:var(--text);font-weight:600}
+  .wf .track{position:relative;height:20px;background:rgba(11,16,27,.7);border-radius:5px;overflow:hidden}
+  .wf .ev{position:absolute;top:3px;height:14px;border-radius:4px;min-width:5px;cursor:pointer;
+    transition:filter .15s;animation:grow .5s ease both}
+  @keyframes grow{from{transform:scaleX(0);transform-origin:left}to{transform:scaleX(1)}}
+  .wf .ev:hover{filter:brightness(1.5)}
+  .wf .axis{display:grid;grid-template-columns:170px 1fr;gap:12px;margin-top:6px}
+  .wf .axis .ticks{position:relative;height:16px;font:10px var(--mono);color:var(--dim2)}
+  .wf .axis .ticks span{position:absolute;transform:translateX(-50%)}
+  .ev-MODEL_CALL{background:var(--accent)} .ev-TOOL_CALL{background:var(--teal)}
+  .ev-TOOL_RESULT{background:#33506b} .ev-FINAL_ANSWER{background:var(--ok)} .ev-ERROR{background:var(--bad)}
+  .ev-PLAN{background:var(--violet)}
+  .legend-ev{display:flex;gap:14px;margin-top:12px;font:11px var(--mono);color:var(--dim);flex-wrap:wrap}
+  .legend-ev i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .evlist{font:12px/1.8 var(--mono);color:var(--dim);display:none;margin-top:12px}
+  .evlist b{color:var(--text)}
+  .save-case{margin-top:14px}
+
+  /* ── diff ── */
+  .selrow{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .selrow select{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;
+    font:12px var(--mono);padding:7px 11px}
+  tr.flip-bad{background:#3a1d1d} tr.flip-good{background:#12331f}
+
+  .toast{position:fixed;right:26px;bottom:26px;background:var(--panel);border:1px solid var(--ok);
+    border-radius:12px;padding:14px 20px;display:none;align-items:center;gap:12px;z-index:50;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);animation:reveal .3s ease both;font-size:13px}
+  .toast b{color:var(--ok)}
+
+  footer{border-top:1px solid var(--line);padding:20px 26px;color:var(--dim2);font:12px var(--sans)}
+  footer b{color:var(--dim)}
+  footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">◎</div>
+  <h1>AgentLens <small>历史数据分析 · 看板原型</small></h1>
+  <span class="badge proto">PROTOTYPE · 纯前端 MOCK</span>
+  <div class="legend">
+    <span><i style="background:var(--ok)"></i>M1 导入闭环</span>
+    <span><i style="background:var(--accent)"></i>M2 分析增强</span>
+    <span><i style="background:var(--violet)"></i>M3 数据沉淀</span>
+  </div>
+</header>
+
+<nav>
+  <button data-tab="runs">运行列表</button>
+  <button data-tab="diff">逐用例 diff</button>
+  <button class="on" data-tab="import">导入历史</button>
+  <button class="m3" title="M2：标定 / compare / approved-baseline 工件查看页">工件查看 · M2</button>
+</nav>
+
+<main>
+
+<!-- ═══════════ 导入历史 ═══════════ -->
+<section class="stage on" id="tab-import">
+  <h2>导入历史数据 <span class="tag">M1</span></h2>
+  <div class="drop" id="drop">
+    <div class="ico">⇩</div>
+    <b>拖入历史文件，或点击选择</b>
+    <span>支持 <code>session.jsonl(.zstd)</code> · OTLP <code>NDJSON</code> · AIOpsLab results JSON —— 单文件 ≤ 64MB</span>
+    <div class="samples">
+      <span class="chip" onclick="enqueue('dsh')">≡ 模拟：session-2026-10-14.jsonl.zstd · 2.4MB</span>
+      <span class="chip" onclick="enqueue('otlp')">≡ 模拟：otel-traces-export.ndjson · 114KB</span>
+      <span class="chip" onclick="enqueue('aiopslab')">≡ 模拟：aiopslab-results-8842.json · 36KB</span>
+    </div>
+  </div>
+
+  <div class="queue" id="queue">
+    <h2>待导入 <span class="tag">类型自动探测</span></h2>
+    <div id="queueList"></div>
+    <button class="bar-btn" id="goBtn" onclick="doImport()">⏎ 确认导入</button>
+    <span class="muted" style="margin-left:12px;font-size:12px">runId 冲突默认跳过；全部数据将标记 <code class="id">source=ui-import</code></span>
+  </div>
+
+  <div class="results" id="results">
+    <h2>导入结果</h2>
+    <div id="resultList"></div>
+    <button class="bar-btn" onclick="goTab('runs')">→ 前往运行列表查看</button>
+  </div>
+</section>
+
+<!-- ═══════════ 运行列表 ═══════════ -->
+<section class="stage" id="tab-runs">
+  <h2>运行列表 <span class="tag">M1 · source 溯源与筛选</span></h2>
+  <div class="filters" id="srcFilters">
+    <span class="fchip on" data-f="all">全部 5</span>
+    <span class="fchip" data-f="ui-import">◉ 导入 3</span>
+    <span class="fchip" data-f="native">原生 2</span>
+  </div>
+  <table>
+    <thead><tr><th>started</th><th>task</th><th>source</th><th>status</th><th>eval</th><th>dur</th><th>events</th></tr></thead>
+    <tbody id="runRows"></tbody>
+  </table>
+
+  <div id="detail">
+    <div class="dt-h">
+      <h3 id="dtTitle"></h3>
+      <span id="dtPills"></span>
+      <span class="meta" id="dtMeta"></span>
+      <span class="tgl">
+        <button class="on" id="tglWf" onclick="setView('wf')">瀑布</button>
+        <button id="tglList" onclick="setView('list')">列表</button>
+      </span>
+    </div>
+    <div class="wf" id="wf"></div>
+    <div class="evlist" id="evlist"></div>
+    <div class="legend-ev" id="wfLegend"></div>
+    <div class="save-case">
+      <button class="bar-btn" style="opacity:.45;cursor:not-allowed" title="M3：把这条历史会话保存为回归评测场景">
+        ✚ 保存为评测场景 · M3</button>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ diff ═══════════ -->
+<section class="stage" id="tab-diff">
+  <h2>逐用例 diff <span class="tag">已落地 P0-C · 导入数据可直接入选</span></h2>
+  <div class="selrow">
+    <select><option>v1.2.0（基线）</option></select><span class="muted">→</span>
+    <select><option>ui-import：run-imp-7f3a2b</option><option>v1.3.0-rc1</option></select>
+    <span class="muted" id="diffSum">14 cases · 2 flips</span>
+  </div>
+  <table>
+    <thead><tr><th>task</th><th>基线</th><th>候选</th><th>change</th><th>judge reason</th></tr></thead>
+    <tbody>
+      <tr class="flip-bad"><td><code>checkout-oom-diagnosis</code></td><td><span class="pill ok">PASS</span></td>
+        <td><span class="pill bad">FAIL</span></td><td><span class="pill bad">FLIP_TO_FAIL</span></td>
+        <td class="muted">answer cites cluster_audit, never called in trace</td></tr>
+      <tr class="flip-good"><td><code>dns_resolution_failure</code></td><td><span class="pill bad">FAIL</span></td>
+        <td><span class="pill ok">PASS</span></td><td><span class="pill ok">FLIP_TO_PASS</span></td>
+        <td class="muted">now cites coredns endpoints evidence</td></tr>
+      <tr><td><code>pod_crash_loop</code></td><td><span class="pill ok">PASS</span></td>
+        <td><span class="pill ok">PASS</span></td><td><span class="pill ok">SAME_PASS</span></td><td class="muted">—</td></tr>
+      <tr><td><code>tls_certificate_expired</code></td><td><span class="pill warn">FAIL</span></td>
+        <td><span class="pill warn">FAIL</span></td><td><span class="pill warn">SAME_FAIL</span></td>
+        <td class="muted">cert renewal path still missing from answer</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+
+<div class="toast" id="toast"><b>✓</b><span id="toastMsg"></span></div>
+
+<footer>
+  <b>原型说明</b> — 深色观测台延续现有 DashboardServer 风格；所有数据为前端 Mock，未接后端。
+  设计规划见 <a href="../reports/ui-history-analysis-plan.md">docs/reports/ui-history-analysis-plan.md</a> ·
+  M1=导入闭环（本页拖拽/探测/落库/source 筛选） · M2=瀑布时间线/工件查看页 · M3=保存为场景/标注/回放。
+  竞品参照：Jaeger trace JSON 上传 · Inspect AI view · promptfoo view · Langfuse/Phoenix trace 树。
+</footer>
+
+<script>
+/* ─────────── tabs ─────────── */
+function goTab(name){
+  document.querySelectorAll('nav button[data-tab]').forEach(b=>b.classList.toggle('on',b.dataset.tab===name));
+  document.querySelectorAll('.stage').forEach(s=>s.classList.toggle('on',s.id==='tab-'+name));
+}
+document.querySelectorAll('nav button[data-tab]').forEach(b=>b.onclick=()=>goTab(b.dataset.tab));
+
+/* ─────────── import queue ─────────── */
+const TYPES={
+  dsh:{cls:'dsh',label:'DSH 会话',runs:1},
+  otlp:{cls:'otlp',label:'OTLP 轨迹',runs:2},
+  aiopslab:{cls:'aiopslab',label:'AIOpsLab 结果',runs:1}
+};
+const queue=[];
+const drop=document.getElementById('drop');
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');
+  enqueue([...e.dataTransfer.files].map(f=>f.name).includes('.zstd')?'dsh':'otlp')});
+function enqueue(kind){
+  const names={dsh:'session-2026-10-14.jsonl.zstd',otlp:'otel-traces-export.ndjson',aiopslab:'aiopslab-results-8842.json'};
+  const sizes={dsh:'2.4 MB',otlp:'114 KB',aiopslab:'36 KB'};
+  if(queue.find(q=>q.kind===kind)) return;
+  queue.push({kind,name:names[kind],size:sizes[kind]});
+  renderQueue();
+}
+function renderQueue(){
+  document.getElementById('queue').style.display='block';
+  document.getElementById('queueList').innerHTML=queue.map((q,i)=>`
+    <div class="f"><span class="nm">${q.name}</span><span class="sz">${q.size}</span>
+      <span class="ftype ${TYPES[q.kind].cls}">识别为 ${TYPES[q.kind].label}</span>
+      <select><option>冲突时跳过</option><option>冲突时覆盖</option></select>
+      <span class="x" onclick="removeFile(${i})">✕</span></div>`).join('');
+  document.getElementById('goBtn').disabled=false;
+}
+function removeFile(i){queue.splice(i,1);renderQueue();
+  if(!queue.length) document.getElementById('queue').style.display='none';}
+
+const IMPORT_FIXTURES={
+  dsh:{runs:[{id:'run-imp-7f3a2b',task:'checkout-oom-diagnosis',st:'SUCCESS',pass:true,
+        evals:['task-completion ✓','run-limits ✓']}]},
+  otlp:{runs:[
+        {id:'4bf92c1a…e2c1',task:'otel-py-agent-demo',st:'SUCCESS',pass:true,evals:['task-completion ✓','run-limits ✓']},
+        {id:'9c1d4e07…77aa',task:'otel-qwen-ops-agent',st:'FAILED',pass:false,
+         evals:['task-completion ✗','run-limits ✓','error: element not found']}]},
+  aiopslab:{runs:[{id:'aiopslab-8842-k8s',task:'rca-dns-outage-prod',st:'SUCCESS',pass:true,
+        evals:['task-completion ✓','run-limits ✓','compliance ✓']}]},
+};
+function doImport(){
+  const btn=document.getElementById('goBtn');btn.disabled=true;btn.textContent='◌ 导入中…';
+  setTimeout(()=>{
+    document.getElementById('results').style.display='block';
+    document.getElementById('resultList').innerHTML=queue.map((q,i)=>{
+      const fx=IMPORT_FIXTURES[q.kind];
+      return `<div class="rcard" style="animation-delay:${i*.15}s">
+        <div class="h"><span class="nm">${q.name}</span>
+          <span class="ftype ${TYPES[q.kind].cls}">${TYPES[q.kind].label}</span>
+          <span class="sz">${q.size}</span><span class="pill src">source=ui-import</span>
+          <span class="pill ok">${fx.runs.length} run 入库</span></div>
+        ${fx.runs.map(r=>`<div class="rrun"><code>${r.id}</code> <span>${r.task}</span>
+          ${r.st==='SUCCESS'?'<span class="pill ok">SUCCESS</span>':'<span class="pill bad">FAILED</span>'}
+          ${r.pass?'<span class="pill ok">PASS</span>':'<span class="pill bad">FAIL</span>'}
+          <span class="dim2">${r.evals.join(' · ')}</span></div>`).join('')}
+      </div>`}).join('');
+    btn.textContent='⏎ 确认导入';btn.disabled=false;
+    toast(`${queue.reduce((n,q)=>n+TYPES[q.kind].runs,0)} 条历史 run 已入库，已出现在运行列表（source=ui-import）`);
+  },900);
+}
+function toast(msg){const t=document.getElementById('toast');
+  document.getElementById('toastMsg').textContent=msg;t.style.display='flex';
+  clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3800);}
+
+/* ─────────── runs + detail ─────────── */
+const RUNS=[
+  {started:'10-14 20:41',id:'run-imp-7f3a2b',task:'checkout-oom-diagnosis',src:'ui-import',st:'SUCCESS',pass:true,dur:'8.2s',ev:9},
+  {started:'10-14 20:41',id:'4bf92c1a…e2c1',task:'otel-py-agent-demo',src:'ui-import',st:'SUCCESS',pass:true,dur:'3.1s',ev:6},
+  {started:'10-14 20:41',id:'9c1d4e07…77aa',task:'otel-qwen-ops-agent',src:'ui-import',st:'FAILED',pass:false,dur:'1.4s',ev:4},
+  {started:'10-14 20:58',id:'a1b2c3d4',task:'pod_crash_loop',src:'native',st:'SUCCESS',pass:true,dur:'0.4s',ev:7},
+  {started:'10-14 20:58',id:'e5f6a7b8',task:'service_5xx_spike',src:'native',st:'FAILED',pass:false,dur:'0.3s',ev:5},
+];
+let srcFilter='all',curRun=null,view='wf';
+function renderRuns(){
+  const rows=RUNS.filter(r=>srcFilter==='all'||r.src===srcFilter);
+  document.getElementById('runRows').innerHTML=rows.map(r=>`
+    <tr class="${r.src==='ui-import'?'ui':''}" onclick="openDetail('${r.id}')">
+      <td class="muted">${r.started}</td><td><code>${r.task}</code></td>
+      <td>${r.src==='ui-import'?'<span class="pill src">◉ ui-import</span>':'<span class="pill dim">native</span>'}</td>
+      <td>${r.st==='SUCCESS'?'<span class="pill ok">SUCCESS</span>':'<span class="pill bad">FAILED</span>'}</td>
+      <td>${r.pass?'<span class="pill ok">PASS</span>':'<span class="pill bad">FAIL</span>'}</td>
+      <td class="muted">${r.dur}</td><td class="muted">${r.ev}</td></tr>`).join('');
+}
+document.querySelectorAll('#srcFilters .fchip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('#srcFilters .fchip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');srcFilter=c.dataset.f;renderRuns();});
+
+const EVENTS=[
+  {t:'MODEL_CALL',   name:'plan-diagnosis',     at:0,   ms:1200},
+  {t:'TOOL_CALL',    name:'query_prometheus',   at:1200,ms:900},
+  {t:'TOOL_RESULT',  name:'query_prometheus',   at:2100,ms:50},
+  {t:'TOOL_CALL',    name:'get_pod_logs',       at:2200,ms:1200},
+  {t:'TOOL_RESULT',  name:'get_pod_logs',       at:3400,ms:60},
+  {t:'MODEL_CALL',   name:'analyze-evidence',   at:3500,ms:2100},
+  {t:'TOOL_CALL',    name:'describe_pod',       at:5600,ms:800},
+  {t:'TOOL_RESULT',  name:'describe_pod',       at:6400,ms:50},
+  {t:'MODEL_CALL',   name:'conclude-remediation',at:6500,ms:1700},
+  {t:'FINAL_ANSWER', name:'answer',             at:8200,ms:50},
+];
+function openDetail(id){
+  curRun=RUNS.find(r=>r.id===id);if(!curRun) return;
+  document.getElementById('detail').style.display='block';
+  document.getElementById('dtTitle').textContent=curRun.task;
+  document.getElementById('dtPills').innerHTML=
+    (curRun.st==='SUCCESS'?'<span class="pill ok">SUCCESS</span>':'<span class="pill bad">FAILED</span>')+
+    (curRun.pass?'<span class="pill ok">PASS</span>':'<span class="pill bad">FAIL</span>')+
+    (curRun.src==='ui-import'?'<span class="pill src">◉ ui-import</span>':'');
+  document.getElementById('dtMeta').textContent=`${curRun.id} · ${curRun.dur} · ${curRun.ev} events`;
+  renderView();document.getElementById('detail').scrollIntoView({behavior:'smooth'});
+}
+function setView(v){view=v;
+  document.getElementById('tglWf').classList.toggle('on',v==='wf');
+  document.getElementById('tglList').classList.toggle('on',v==='list');renderView();}
+function renderView(){
+  if(!curRun) return;
+  const wf=document.getElementById('wf'),list=document.getElementById('evlist');
+  if(curRun.id!=='run-imp-7f3a2b'){wf.innerHTML='<div class="muted" style="padding:14px 0">瀑布视图（M2）：该 Mock 数据仅为主导入 run 配备完整事件轴</div>';list.style.display='none';document.getElementById('wfLegend').innerHTML='';return;}
+  const total=8250;
+  wf.innerHTML='<div class="wf">'+EVENTS.map((e,i)=>`
+    <div class="lane"><div class="lbl"><b>${e.t}</b> ${e.name}</div>
+      <div class="track"><div class="ev ev-${e.t}" title="${e.t} ${e.name} · ${e.ms}ms"
+        style="left:${e.at/total*100}%;width:${Math.max(e.ms/total*100,.7)}%;animation-delay:${i*40}ms"></div></div>
+    </div>`).join('')+'</div>'+
+    `<div class="axis"><div></div><div class="ticks">
+      <span style="left:0">0s</span><span style="left:33%">2.75s</span>
+      <span style="left:66%">5.5s</span><span style="left:100%">8.25s</span></div></div>`;
+  document.getElementById('wfLegend').innerHTML=['MODEL_CALL','TOOL_CALL','TOOL_RESULT','FINAL_ANSWER']
+    .map(t=>`<span><i class="ev-${t}"></i>${t}</span>`).join('');
+  list.innerHTML=EVENTS.map((e,i)=>`<div><span class="dim2">#${i}</span> <b>${e.t}</b> ${e.name} · ${e.ms}ms</div>`).join('');
+  list.style.display=view==='list'?'block':'none';
+  wf.style.display=view==='wf'?'block':'none';
+  document.getElementById('wfLegend').style.display=view==='wf'?'flex':'none';
+}
+renderRuns();
+</script>
+</body>
+</html>
