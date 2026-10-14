@@ -32,6 +32,9 @@ import java.util.Optional;
  * GET /api/runs/{id}     -> full run: events timeline + evaluations + metadata
  *                           + diagnoses (computed live from the trace)
  * GET /api/scenarios     -> per-scenario pass^k layering
+ * GET /api/diff          -> P0-C per-case baseline/candidate diff (pass/fail
+ *                           flips highlighted, judge reason of the failing
+ *                           side, row click drills into the trace)
  * </pre>
  *
  * Read-only by design: the dashboard never mutates the store.
@@ -63,6 +66,10 @@ public final class DashboardServer implements AutoCloseable {
         });
         server.createContext("/api/scenarios", exchange ->
                 respondJson(exchange, 200, scenarios()));
+        server.createContext("/api/diff", exchange -> {
+            var query = parseQuery(exchange.getRequestURI().getRawQuery());
+            respondJson(exchange, 200, diff(query.get("baseline"), query.get("candidate")));
+        });
         server.start();
     }
 
@@ -164,6 +171,125 @@ public final class DashboardServer implements AutoCloseable {
             row.put("layer", layer);
             out.add(row);
         });
+        return out;
+    }
+
+    /**
+     * P0-C: per-case diff between two agent versions (baseline vs candidate).
+     * Cases are aligned by taskId; a version's case outcome is its latest run.
+     * Verdicts highlight pass/fail flips so a regression is one glance away.
+     * With no explicit query params the two most recently run versions compare.
+     */
+    public Map<String, Object> diff(String baseline, String candidate) throws IOException {
+        var entries = allEntries();
+        // versions ordered by most recent activity
+        var versions = new LinkedHashMap<String, java.time.Instant>();
+        for (var entry : entries) {
+            String version = entry.getValue().map(com.agentlens.core.EvaluationRun::agentVersion)
+                    .orElse(null);
+            if (version == null || version.isBlank()) continue;
+            versions.merge(version, entry.getKey().startedAt(),
+                    (a, b) -> a.isAfter(b) ? a : b);
+        }
+        List<String> ordered = new ArrayList<>(versions.entrySet().stream()
+                .map(Map.Entry::getKey)
+                .toList());
+        java.util.Collections.reverse(ordered);
+        // stable sort on reversed insertion order: ties on startedAt go to the
+        // version that was ingested later (the newer one)
+        ordered.sort((a, b) -> versions.get(b).compareTo(versions.get(a)));
+        if (baseline == null || baseline.isBlank()) baseline = ordered.size() > 1 ? ordered.get(1) : null;
+        if (candidate == null || candidate.isBlank()) candidate = ordered.isEmpty() ? null : ordered.get(0);
+
+        // one row per taskId seen on either side; per version keep the latest run
+        var tasks = new java.util.TreeSet<String>();
+        var latest = new LinkedHashMap<String, Map.Entry<AgentRun,
+                Optional<com.agentlens.core.EvaluationRun>>>();
+        for (var entry : entries) {
+            String version = entry.getValue().map(com.agentlens.core.EvaluationRun::agentVersion)
+                    .orElse(null);
+            if (version == null) continue;
+            String key = version + "\u0000" + entry.getKey().taskId();
+            tasks.add(entry.getKey().taskId());
+            latest.merge(key, entry, (a, b) ->
+                    a.getKey().startedAt().isAfter(b.getKey().startedAt()) ? a : b);
+        }
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        long flips = 0;
+        for (String task : tasks) {
+            var baseSide = latest.get((baseline == null ? "" : baseline) + "\u0000" + task);
+            var candSide = latest.get((candidate == null ? "" : candidate) + "\u0000" + task);
+            Boolean basePass = baseSide == null ? null : passed(baseSide.getValue());
+            Boolean candPass = candSide == null ? null : passed(candSide.getValue());
+            String verdict = basePass == null ? "MISSING_BASELINE"
+                    : candPass == null ? "MISSING_CANDIDATE"
+                    : basePass && candPass ? "SAME_PASS"
+                    : !basePass && !candPass ? "SAME_FAIL"
+                    : basePass ? "FLIP_TO_FAIL" : "FLIP_TO_PASS";
+            if (verdict.startsWith("FLIP")) flips++;
+            // judge reason: prefer the failing side's worst result, else the judge's own
+            String reason = candSide != null && Boolean.FALSE.equals(candPass)
+                    ? judgeReason(candSide.getValue())
+                    : baseSide != null && Boolean.FALSE.equals(basePass)
+                    ? judgeReason(baseSide.getValue()) : null;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("task", task);
+            row.put("verdict", verdict);
+            row.put("baseline", baseSide == null ? null : side(baseSide));
+            row.put("candidate", candSide == null ? null : side(candSide));
+            row.put("judgeReason", reason);
+            rows.add(row);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("baseline", baseline);
+        out.put("candidate", candidate);
+        out.put("versions", ordered);
+        out.put("flips", flips);
+        out.put("rows", rows);
+        return out;
+    }
+
+    private static Map<String, Object> side(Map.Entry<AgentRun,
+            Optional<com.agentlens.core.EvaluationRun>> entry) {
+        AgentRun run = entry.getKey();
+        Optional<com.agentlens.core.EvaluationRun> evaluation = entry.getValue();
+        double score = evaluation.map(e -> e.results().stream()
+                        .mapToDouble(EvaluationResult::score).average().orElse(0.0))
+                .orElse(0.0);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("runId", run.runId());
+        out.put("passed", passed(evaluation));
+        out.put("score", Math.round(score * 1000) / 1000.0);
+        out.put("durationMs", run.durationMs());
+        return out;
+    }
+
+    /** Judge-facing reason: failing judge/deepeval-ish result first, then any failure. */
+    private static String judgeReason(Optional<com.agentlens.core.EvaluationRun> evaluation) {
+        if (evaluation.isEmpty()) return null;
+        var results = evaluation.get().results();
+        var judgeish = results.stream().filter(r -> {
+            String name = r.evaluator().toLowerCase();
+            return name.contains("judge") || name.contains("deepeval");
+        }).toList();
+        var failedJudge = judgeish.stream().filter(r -> !r.passed()).findFirst();
+        if (failedJudge.isPresent()) return failedJudge.get().reason();
+        if (!judgeish.isEmpty()) return judgeish.get(0).reason();
+        return results.stream().filter(r -> !r.passed()).findFirst()
+                .map(EvaluationResult::reason).orElse(null);
+    }
+
+    private static Map<String, String> parseQuery(String raw) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (raw == null || raw.isBlank()) return out;
+        for (String pair : raw.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq <= 0) continue;
+            out.put(java.net.URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+                    java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+        }
         return out;
     }
 
@@ -275,6 +401,8 @@ public final class DashboardServer implements AutoCloseable {
                     border-bottom:1px dashed var(--line)}
               .ev b{color:var(--text)} .ev .t{color:var(--accent)}
               .diag{border-left:3px solid var(--warn);padding:6px 12px;margin:8px 0;background:#0b101b;border-radius:0 8px 8px 0}
+              tr.flip-bad{background:#3a1d1d} tr.flip-good{background:#12331f}
+              tr.flip-bad:hover{background:#4a2424} tr.flip-good:hover{background:#184229}
               code{background:#0b101b;padding:1px 6px;border-radius:4px;font-size:12px}
               .muted{color:var(--dim)}
               </style></head><body>
@@ -285,6 +413,16 @@ public final class DashboardServer implements AutoCloseable {
               <h2>Scenarios (pass^k layers)</h2>
               <table><thead><tr><th>scenario</th><th>runs</th><th>passed</th><th>pass rate</th><th>layer</th></tr></thead>
                 <tbody id="scenarios"></tbody></table>
+              <h2>Version diff (per-case)</h2>
+              <div style="margin-bottom:8px">
+                <select id="diffBase"></select>
+                <span class="muted">→</span>
+                <select id="diffCand"></select>
+                <span id="diffSummary" class="muted"></span>
+              </div>
+              <table><thead><tr><th>task</th><th>baseline</th><th>candidate</th>
+                <th>change</th><th>judge reason (failing side)</th></tr></thead>
+                <tbody id="diff"></tbody></table>
               <h2>Runs</h2>
               <div style="margin-bottom:8px">
                 <input id="q" placeholder="filter by task…">
@@ -329,8 +467,35 @@ public final class DashboardServer implements AutoCloseable {
                  <td>${(r.passRate * 100).toFixed(1)}%</td><td>${layerPill(r.layer)}</td></tr>`).join("");
             }
 
-            function renderRuns() {
-              const q = $("q").value.toLowerCase(), st = $("status").value,
+            const verdictPill = v => v === "FLIP_TO_PASS" ? pill(v, "ok")
+                                 : v === "FLIP_TO_FAIL" ? pill(v, "bad")
+                                 : v === "SAME_PASS" ? pill(v, "ok")
+                                 : v === "SAME_FAIL" ? pill(v, "warn")
+                                 : pill(v, "warn");
+            const sidePill = (s, cls) => s ? (s.passed ? pill("PASS", cls || "ok") : pill("FAIL", "bad")) : '<span class="muted">-</span>';
+
+            async function loadDiff() {
+              const d = await j("/api/diff");
+              const opts = d.versions.map(v => `<option>${esc(v)}</option>`).join("");
+              $("diffBase").innerHTML = opts; $("diffCand").innerHTML = opts;
+              $("diffBase").value = d.baseline ?? ""; $("diffCand").value = d.candidate ?? "";
+              const flips = d.rows.filter(r => r.verdict.startsWith("FLIP"));
+              $("diffSummary").textContent = `${d.rows.length} cases · ${flips.length} flips`;
+              const drill = r => r.verdict === "FLIP_TO_PASS" || r.verdict === "SAME_FAIL"
+                  ? r.baseline?.runId : r.candidate?.runId;
+              $("diff").innerHTML = d.rows.map(r => {
+                const cls = r.verdict === "FLIP_TO_FAIL" ? ' class="flip-bad"'
+                          : r.verdict === "FLIP_TO_PASS" ? ' class="flip-good"' : "";
+                const id = drill(r);
+                return `<tr${cls} ${id ? `onclick="openRun('${esc(id)}')"` : ""}>
+                   <td><code>${esc(r.task)}</code></td>
+                   <td>${sidePill(r.baseline)}</td><td>${sidePill(r.candidate)}</td>
+                   <td>${verdictPill(r.verdict)}</td>
+                   <td class="muted">${esc(r.judgeReason ?? "-")}</td></tr>`;
+              }).join("") || '<tr><td colspan="5" class="muted">need two agent versions in the store</td></tr>';
+            }
+
+            function renderRuns() {              const q = $("q").value.toLowerCase(), st = $("status").value,
                     ver = $("version").value, onlyBad = $("onlyFailed").checked;
               const rows = RUNS.filter(r =>
                 (!q || r.taskId.toLowerCase().includes(q)) &&
@@ -385,7 +550,24 @@ public final class DashboardServer implements AutoCloseable {
               [...new Set(RUNS.map(r => r.agentVersion).filter(Boolean))].forEach(v => {
                 const o = document.createElement("option"); o.textContent = v; $("version").appendChild(o);
               });
-              renderTrend(RUNS); renderRuns();
+              renderTrend(RUNS); renderRuns(); loadDiff();
+              ["diffBase", "diffCand"].forEach(id => $(id).addEventListener("change", () =>
+                j(`/api/diff?baseline=${encodeURIComponent($("diffBase").value)}&candidate=${encodeURIComponent($("diffCand").value)}`)
+                  .then(d => {
+                    const flips = d.rows.filter(r => r.verdict.startsWith("FLIP"));
+                    $("diffSummary").textContent = `${d.rows.length} cases · ${flips.length} flips`;
+                    $("diff").innerHTML = d.rows.map(r => {
+                      const cls = r.verdict === "FLIP_TO_FAIL" ? ' class="flip-bad"'
+                                : r.verdict === "FLIP_TO_PASS" ? ' class="flip-good"' : "";
+                      const id = r.verdict === "FLIP_TO_PASS" || r.verdict === "SAME_FAIL"
+                          ? r.baseline?.runId : r.candidate?.runId;
+                      return `<tr${cls} ${id ? `onclick="openRun('${esc(id)}')"` : ""}>
+                         <td><code>${esc(r.task)}</code></td>
+                         <td>${sidePill(r.baseline)}</td><td>${sidePill(r.candidate)}</td>
+                         <td>${verdictPill(r.verdict)}</td>
+                         <td class="muted">${esc(r.judgeReason ?? "-")}</td></tr>`;
+                    }).join("") || '<tr><td colspan="5" class="muted">no cases</td></tr>';
+                  })));
               ["q", "status", "version", "onlyFailed"].forEach(id =>
                 $(id).addEventListener("input", renderRuns));
             }

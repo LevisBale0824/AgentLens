@@ -62,6 +62,7 @@ class DashboardServerTest {
              DashboardServer server = new DashboardServer(store, 0)) {
             String base = server.baseUrl();
             assertTrue(get(base + "/").contains("AgentLens Dashboard"));
+            assertTrue(get(base + "/").contains("Version diff (per-case)"));
             assertTrue(get(base + "/api/runs").contains(RUN_ID));
             assertTrue(get(base + "/api/scenarios").contains("STABLE_PASS"));
             assertTrue(get(base + "/api/summary").contains("\"runs\":1"));
@@ -103,6 +104,72 @@ class DashboardServerTest {
             String summary = get(server.baseUrl() + "/api/summary");
             assertTrue(summary.contains("\"stablePass\":1"));
             assertTrue(summary.contains("\"flaky\":0"));
+        }
+    }
+
+    /** Stores one run + evaluation pair for a (taskId, version, passed) case. */
+    private void addCase(SqliteRunStore store, String taskId, String version, boolean passed,
+                         String judgeReason) throws Exception {
+        String runId = "run-" + taskId + "-" + version;
+        AgentTask task = new AgentTask(taskId, "diagnose", Map.of(), 10);
+        AgentRun run = new MockAgentAdapter().run(task);
+        AgentRun identified = new AgentRun(runId, run.taskId(), run.status(),
+                passed ? run.finalAnswer() : "wrong conclusion",
+                run.events(), run.startedAt(), run.durationMs(), run.totalTokens(), run.error());
+        store.saveRun(identified, "agent");
+        store.saveEvaluation(new EvaluationRun(runId, taskId, "agent", version,
+                identified.startedAt(),
+                List.of(new EvaluationResult("llm-judge", passed, passed ? 0.9 : 0.2,
+                        judgeReason, Map.of())),
+                Map.of()));
+    }
+
+    @Test
+    void perCaseDiffHighlightsFlipsAlignsByTaskAndDrillsIntoTraces() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("diff.db"));
+             DashboardServer server = new DashboardServer(store, 0)) {
+            // v1 batch first, v2 batch last -> v2 is the most recent version
+            // (candidate), v1 the baseline; the unpaired case must not change that
+            addCase(store, "case-only-baseline", "v1", true, "fine");
+            addCase(store, "case-pass-pass", "v1", true, "fine");
+            addCase(store, "case-pass-pass", "v2", true, "fine");
+            addCase(store, "case-regression", "v1", true, "was correct");
+            addCase(store, "case-regression", "v2", false, "wrong conclusion asserted");
+            addCase(store, "case-fix", "v1", false, "hallucinated evidence");
+            addCase(store, "case-fix", "v2", true, "now cites tools");
+            addCase(store, "case-same-fail", "v1", false, "still broken");
+            addCase(store, "case-same-fail", "v2", false, "still broken");
+
+            String body = get(server.baseUrl() + "/api/diff");
+            assertTrue(body.contains("\"FLIP_TO_FAIL\""), body);
+            assertTrue(body.contains("\"FLIP_TO_PASS\""), body);
+            assertTrue(body.contains("\"SAME_FAIL\""), body);
+            assertTrue(body.contains("MISSING_CANDIDATE"), body);
+            // failing side's judge reason surfaces for drill-down context
+            assertTrue(body.contains("wrong conclusion asserted"), body);
+            assertTrue(body.contains("hallucinated evidence"), body);
+            assertTrue(body.contains("\"flips\":2"), body);
+            // explicit params reorder the comparison
+            String explicit = get(server.baseUrl() + "/api/diff?baseline=v2&candidate=v1");
+            assertTrue(explicit.contains("\"baseline\":\"v2\""), explicit);
+            assertTrue(explicit.contains("\"candidate\":\"v1\""), explicit);
+        }
+    }
+
+    @Test
+    void diffWithFewerThanTwoVersionsStillResponds() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("diff1.db"));
+             DashboardServer server = new DashboardServer(store, 0)) {
+            addCase(store, "solo", "v1", true, "fine");
+            String body = get(server.baseUrl() + "/api/diff");
+            // single version: it becomes the candidate, baseline side is missing
+            assertTrue(body.contains("MISSING_BASELINE"), body);
+            assertTrue(body.contains("\"candidate\":\"v1\""), body);
+        }
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("diff0.db"));
+             DashboardServer server = new DashboardServer(store, 0)) {
+            String empty = get(server.baseUrl() + "/api/diff");
+            assertTrue(empty.contains("\"rows\":[]"), empty);
         }
     }
 }

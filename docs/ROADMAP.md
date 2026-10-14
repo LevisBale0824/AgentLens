@@ -567,6 +567,21 @@ OpenLLMetry、OpenInference 自动埋点)把 OTLP/HTTP exporter 指到本端点,
 - **业界对齐**:OTLP 原生接入是 Langfuse/Phoenix 的共同底座;我们做 OTLP/JSON 起步
   (两家 HTTP 栈均支持),gRPC(4317)为后续可选。
 
+### 7.11 P0-C 看板: 基线/候选逐用例 diff(已落地)
+
+`serve` 看板新增 "Version diff (per-case)" 区块与 `GET /api/diff?baseline=V1&candidate=V2`
+(无参数时默认对比最近活跃的两个 agentVersion,candidate=最新):
+
+- **对齐**:按 taskId 对齐两版本各自的**最新 run**(与 compare 命令的固定数据集语义一致);
+  一侧缺失标记 MISSING_BASELINE/MISSING_CANDIDATE(新用例/被删用例一目了然)。
+- **判定行**:SAME_PASS / SAME_FAIL / **FLIP_TO_PASS**(绿底)/ **FLIP_TO_FAIL**(红底)
+  ——回归一眼可见;头部汇总 `N cases · M flips`。
+- **judge 理由列**:取 failing 侧的 judge/deepeval 类评测器 reason(优先失败判定,否则该
+  评测器首条),非 judge 失败取首个失败 reason——不用点开 run 就知道"为什么翻"。
+- **下钻**:行点击直接打开对应侧 run 详情(trace 时间线+评测+诊断),翻转归因一步到位。
+- **测试**:6 看板测试(覆盖五种判定行、显式参数对比、理由列、页面区块、单版本/空库
+  降级),全量 -Pquality verify 绿。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

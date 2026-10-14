@@ -270,8 +270,8 @@ P2 LLM Judge / Web UI / 外部集成
     `wrong_conclusion`/`fabricated_evidence`/`partial_evidence` 边界行为 +
     `judge-calibrate --corpus data/judge-calibration-corpus.json`（版本化；10 条样例 = 2 正例 +
     8 负例，CorpusLoader 6 单测 + mock 行为 5 新单测）。
-  - ⬜ Dashboard 基线/候选**逐用例 diff**（pass↔fail 高亮 + judge 理由列 + 失败用例 trace 下钻；
-    对标 promptfoo Compare / Langfuse Compare Experiments）。
+  - ✅ Dashboard 基线/候选**逐用例 diff**（P0-C）：`/api/diff` 按 taskId 对齐两版本最新
+    run，FLIP_TO_PASS/FLIP_TO_FAIL 行高亮、failing 侧 judge 理由列、行点击下钻 trace。
   - ⬜ CI 门禁契约细化：质量回归与工具错误退出码分离（promptfoo 100/1 模式）+
     `approved-baseline.json` 门禁工件固定 dataset/评测器版本（Langfuse 双发布策略）。
 - **P1**：分数三来源模型（judge/人工/外部 API 统一挂 run）+ 人工复核队列；存原始 k 次分数、
