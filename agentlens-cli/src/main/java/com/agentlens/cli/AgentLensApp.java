@@ -4,6 +4,8 @@ import com.agentlens.core.AgentAdapter;
 import com.agentlens.core.AgentRun;
 import com.agentlens.core.AgentTask;
 import com.agentlens.core.AdapterRegistry;
+import com.agentlens.eval.ApprovedBaseline;
+import com.agentlens.eval.ApprovedGate;
 import com.agentlens.eval.ComplianceEvaluator;
 import com.agentlens.eval.EvaluatorRegistry;
 import com.agentlens.eval.ExperimentRunner;
@@ -323,7 +325,10 @@ public final class AgentLensApp {
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(summary);
         System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
         logGate("dsh-live", gate);
-        if (!gate.passed() || failed > 0 || aborted > 0) System.exit(1);
+        // P0-D contract: harness-level failures are tool errors (1), the gate's
+        // quality verdict is a regression (100) - CI must be able to tell apart.
+        if (failed > 0 || aborted > 0) System.exit(1);
+        gateExit("dsh-live", gate);
     }
 
     /** Restores and prints a full run (trace timeline + evaluation) by run id. */
@@ -379,6 +384,7 @@ public final class AgentLensApp {
             switch (command) {
                 case "run" -> run(opts);
                 case "compare" -> compare(opts);
+                case "approve" -> approve(opts);
                 case "import" -> importSession(opts);
                 case "show" -> show(opts);
                 case "report" -> report(opts);
@@ -390,7 +396,9 @@ public final class AgentLensApp {
                 default -> {
                     System.err.println("unknown command: " + command);
                     System.err.println("usage: run [...] | compare --baseline B --candidate B"
-                            + " [--baseline-override k=v,..] [--candidate-override k=v,..] | show --run ID"
+                            + " [--baseline-override k=v,..] [--candidate-override k=v,..]"
+                            + " [--approved baseline/approved-baseline.json] [--out PATH]"
+                            + " | approve --compare PATH --out PATH | show --run ID"
                             + " | report [--db PATH] [--out PATH] | serve [--port N] | otel-receive [--port N]"
                             + " [--db PATH] | import --session PATH"
                             + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
@@ -421,6 +429,19 @@ public final class AgentLensApp {
                 validateAdapter(opts.get("adapter"));
                 validateOtel(opts);
                 validateJudge(opts);
+                String approved = opts.get("approved");
+                if (approved != null && !java.nio.file.Files.isRegularFile(Path.of(approved)))
+                    throw new ConfigException("approved-baseline artifact not found: "
+                            + Path.of(approved).toAbsolutePath());
+            }
+            case "approve" -> {
+                String compare = opts.get("compare");
+                if (compare == null || compare.isBlank())
+                    throw new ConfigException("approve requires --compare PATH (a compare --out artifact)");
+                if (!java.nio.file.Files.isRegularFile(Path.of(compare)))
+                    throw new ConfigException("compare artifact not found: " + Path.of(compare).toAbsolutePath());
+                if (opts.get("out") == null || opts.get("out").isBlank())
+                    throw new ConfigException("approve requires --out PATH for the approved-baseline artifact");
             }
             case "serve" -> {
                 int port = requireInt(opts, "port", 8080);
@@ -557,7 +578,7 @@ public final class AgentLensApp {
         var gate = new RegressionGate(List.of("tool-policy"), 0.0).requireStable(PassK.summarize(byTask));
         System.out.printf("%nrelease gate: passed=%s, reason=%s%n", gate.passed(), gate.reason());
         logGate("run", gate);
-        if (!gate.passed()) System.exit(1);
+        gateExit("run", gate);
     }
 
     /**
@@ -643,6 +664,8 @@ public final class AgentLensApp {
 
         List<Scenario> scenarios = new ScenarioLoader().load(scenariosPath);
         List<AgentTask> tasks = scenarios.stream().map(Scenario::toTask).toList();
+        List<String> evaluatorNames = evaluatorNames(opts);
+        String datasetSha = ApprovedBaseline.sha256Hex(scenariosPath);
         System.out.printf("comparing releases on %d scenarios from %s, repeats=%d, adapter=%s%n",
                 scenarios.size(), scenariosPath, repeats, adapterName);
         if (!baselineOverrides.isEmpty())
@@ -654,9 +677,39 @@ public final class AgentLensApp {
                     2 * scenarios.size() * repeats, scenarios.size(), repeats);
         }
 
+        // P0-D: with an approved baseline, the frozen artifact replaces the live
+        // baseline side (Langfuse double-publish): dataset and evaluator set are
+        // checked BEFORE any agent runs, so a drifted setup fails fast at zero cost.
+        ApprovedBaseline.Baseline approved = null;
+        if (opts.get("approved") != null) {
+            try {
+                approved = ApprovedBaseline.load(Path.of(opts.get("approved")));
+            } catch (IllegalArgumentException e) {
+                throw new ConfigException(e.getMessage());
+            }
+            if (!approved.datasetSha256().equals(datasetSha))
+                throw new ConfigException(String.format(
+                        "approved baseline was pinned to a different dataset (approved sha=%s, current sha=%s)",
+                        approved.datasetSha256(), datasetSha));
+            var expected = new java.util.TreeSet<>(approved.evaluatorNames());
+            var actual = new java.util.TreeSet<>(evaluatorNames);
+            if (!expected.equals(actual))
+                throw new ConfigException(String.format(
+                        "evaluator set changed since approval %s -> %s (pin the evaluator set or re-approve)",
+                        expected, actual));
+            System.out.printf("approved baseline: %s (pass^k=%.3f, avgPassRate=%.3f, approvedBy=%s)%n",
+                    opts.get("approved"), approved.passPowK(), approved.avgPassRate(), approved.approvedBy());
+        }
+
         PassK.Summary baseSummary, candSummary;
         String baseLabel, candLabel;
-        if ("dsh".equals(adapterName)) {
+        if (approved != null) {
+            candSummary = runCompareSide(adapterName, "candidate",
+                    candidateBehavior, candidateOverrides, scenarios, tasks, repeats, opts);
+            candLabel = "dsh".equals(adapterName) ? "dsh-headless" : "mock-" + candidateBehavior;
+            baseSummary = null;
+            baseLabel = "approved:" + Path.of(opts.get("approved")).getFileName();
+        } else if ("dsh".equals(adapterName)) {
             var dsh = (com.agentlens.adapters.dsh.DshAgentAdapter) AdapterRegistry.load().get("dsh");
             baseSummary = evaluateDshVersion(dsh, scenarios, repeats, "baseline", baselineOverrides, opts);
             candSummary = evaluateDshVersion(dsh, scenarios, repeats, "candidate", candidateOverrides, opts);
@@ -672,16 +725,124 @@ public final class AgentLensApp {
         }
 
         System.out.printf("%n%-10s %-22s pass^k=%.3f  avgPassRate=%.3f%n",
-                "baseline", baseLabel, baseSummary.passPowK(), baseSummary.avgPassRate());
+                "baseline", baseLabel,
+                baseSummary != null ? baseSummary.passPowK() : approved.passPowK(),
+                baseSummary != null ? baseSummary.avgPassRate() : approved.avgPassRate());
         System.out.printf("%-10s %-22s pass^k=%.3f  avgPassRate=%.3f%n",
                 "candidate", candLabel, candSummary.passPowK(), candSummary.avgPassRate());
 
         printLayered("candidate", candSummary);
 
-        var gate = new RegressionGate(List.of("tool-policy"), 0.0).compare(baseSummary, candSummary);
+        RegressionGate.GateResult gate = approved != null
+                ? ApprovedGate.check(approved, datasetSha, evaluatorNames, candSummary)
+                : new RegressionGate(List.of("tool-policy"), 0.0).compare(baseSummary, candSummary);
         System.out.printf("%nrelease gate: passed=%s%n  reason=%s%n", gate.passed(), gate.reason());
         logGate("compare", gate);
-        if (!gate.passed()) System.exit(1);
+        if (opts.containsKey("out"))
+            writeCompareArtifact(Path.of(opts.get("out")), scenariosPath, datasetSha, adapterName,
+                    repeats, evaluatorNames, baseLabel, baseSummary, candLabel, candSummary, gate);
+        gateExit("compare", gate);
+    }
+
+    /** Runs one compare side (mock behaviors or real dsh sessions). */
+    private static PassK.Summary runCompareSide(String adapterName, String version, String behavior,
+                                                Map<String, String> overrides, List<Scenario> scenarios,
+                                                List<AgentTask> tasks, int repeats,
+                                                Map<String, String> opts) throws Exception {
+        if ("dsh".equals(adapterName)) {
+            var dsh = (com.agentlens.adapters.dsh.DshAgentAdapter) AdapterRegistry.load().get("dsh");
+            return evaluateDshVersion(dsh, scenarios, repeats, version, overrides, opts);
+        }
+        return evaluateVersion(behavior, applyAll(tasks, overrides), repeats, opts);
+    }
+
+    /** Evaluator set names implied by the CLI flags (must match the registries actually built). */
+    private static List<String> evaluatorNames(Map<String, String> opts) {
+        List<String> names = new ArrayList<>(List.of("task-completion", "run-limits",
+                "tool-policy", "compliance"));
+        if (opts.containsKey("judge")) names.add(com.agentlens.eval.LlmJudgeEvaluator.EVALUATOR_NAME);
+        if (opts.containsKey("deepeval")) names.add(com.agentlens.eval.DeepEvalAdapter.EVALUATOR_NAME);
+        return List.copyOf(names);
+    }
+
+    /** Machine-readable comparison artifact (the input for `approve`). */
+    private record CompareArtifact(String generatedAt, DatasetRef dataset, String adapter,
+                                   int repeats, List<String> evaluators,
+                                   SideDoc baseline, SideDoc candidate, GateDoc gate) {
+        record DatasetRef(String path, String sha256) {}
+        record SideDoc(String label, Double passPowK, Double avgPassRate, Map<String, Double> cases) {}
+        record GateDoc(boolean passed, String reason) {}
+    }
+
+    private static void writeCompareArtifact(Path out, Path scenariosPath, String datasetSha,
+                                             String adapterName, int repeats,
+                                             List<String> evaluatorNames,
+                                             String baseLabel, PassK.Summary baseSummary,
+                                             String candLabel, PassK.Summary candSummary,
+                                             RegressionGate.GateResult gate) throws Exception {
+        var artifact = new CompareArtifact(java.time.Instant.now().toString(),
+                new CompareArtifact.DatasetRef(scenariosPath.toString(), datasetSha),
+                adapterName, repeats, evaluatorNames,
+                sideDoc(baseLabel, baseSummary), sideDoc(candLabel, candSummary),
+                new CompareArtifact.GateDoc(gate.passed(), gate.reason()));
+        Path parent = out.getParent();
+        if (parent != null) java.nio.file.Files.createDirectories(parent);
+        java.nio.file.Files.writeString(out,
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .writerWithDefaultPrettyPrinter().writeValueAsString(artifact));
+        System.out.printf("compare artifact written: %s%n", out.toAbsolutePath());
+    }
+
+    /** One comparison side as the artifact carries it (null when using an approved baseline). */
+    private static CompareArtifact.SideDoc sideDoc(String label, PassK.Summary summary) {
+        if (summary == null) return null;
+        var cases = new java.util.LinkedHashMap<String, Double>();
+        summary.perScenario().forEach(s -> cases.put(s.scenarioId(), s.passRate()));
+        return new CompareArtifact.SideDoc(label, summary.passPowK(), summary.avgPassRate(), cases);
+    }
+
+    /**
+     * P0-D: promotes a reviewed comparison artifact to the approved baseline
+     * (the second publish in the Langfuse double-publish flow). The artifact
+     * pins dataset sha256, evaluator set, repeats, and per-case pass rates;
+     * future `compare --approved` runs gate against it instead of a live
+     * baseline re-run.
+     */
+    private static void approve(Map<String, String> opts) throws Exception {
+        Path artifactPath = Path.of(opts.get("compare"));
+        Path out = Path.of(opts.get("out"));
+        var artifact = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readValue(artifactPath.toFile(), CompareArtifact.class);
+        if (artifact.candidate() == null || artifact.candidate().cases() == null
+                || artifact.candidate().cases().isEmpty())
+            throw new ConfigException("compare artifact has no candidate side to approve: " + artifactPath);
+        var baseline = new ApprovedBaseline.Baseline(ApprovedBaseline.FORMAT_VERSION,
+                artifact.adapter(), artifact.dataset().sha256(), artifact.evaluators(),
+                artifact.repeats(), artifact.candidate().passPowK(), artifact.candidate().avgPassRate(),
+                artifact.candidate().cases(), opts.getOrDefault("by", "human-review"),
+                java.time.Instant.now().toString());
+        ApprovedBaseline.write(baseline, out);
+        System.out.printf("approved baseline written: %s%n  agent=%s dataset sha=%s cases=%d"
+                        + " pass^k=%.3f avgPassRate=%.3f approvedBy=%s%n",
+                out.toAbsolutePath(), artifact.adapter(), artifact.dataset().sha256(),
+                baseline.casePassRates().size(), baseline.passPowK(), baseline.avgPassRate(),
+                baseline.approvedBy());
+        log.event("info", "baseline.approved", "artifact", out.toAbsolutePath().toString(),
+                "datasetSha256", artifact.dataset().sha256(), "cases", baseline.casePassRates().size());
+    }
+
+    /**
+     * P0-D exit-code contract (promptfoo-style separation): 0 = gate passed,
+     * 100 = quality regression (the gate failed), 1 = tool/infrastructure error
+     * (uncaught exception), 2 = config error (ConfigException). CI jobs can
+     * distinguish "the agent got worse" from "the harness broke".
+     */
+    private static void gateExit(String scope, RegressionGate.GateResult gate) {
+        if (gate.passed()) return;
+        log.event("error", "gate.regression", "scope", scope, "reason", gate.reason());
+        System.err.println("gate regression (exit 100): " + gate.reason());
+        System.err.println("exit-code contract: 0=pass, 100=quality regression, 1=tool error, 2=config error");
+        System.exit(100);
     }
 
     /**

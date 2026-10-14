@@ -49,6 +49,32 @@ class ConfigValidationTest {
     }
 
     @Test
+    void approvedBaselineAndApproveValidation() throws Exception {
+        String s = scenarioFile().toString();
+        // approved artifact must exist when referenced
+        ConfigException e = assertThrows(ConfigException.class, () -> AgentLensApp.validate("compare",
+                Map.of("scenarios", s, "approved", "no/such/baseline.json")));
+        assertTrue(e.getMessage().contains("approved-baseline artifact not found"), e.getMessage());
+        // existing artifact passes
+        Path baseline = tempDir.resolve("approved-baseline.json");
+        java.nio.file.Files.writeString(baseline, "{}");
+        assertDoesNotThrow(() -> AgentLensApp.validate("compare",
+                Map.of("scenarios", s, "approved", baseline.toString())));
+        // approve requires --compare (existing) and --out
+        ConfigException missing = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("approve", Map.of()));
+        assertTrue(missing.getMessage().contains("approve requires --compare"), missing.getMessage());
+        ConfigException noSource = assertThrows(ConfigException.class, () -> AgentLensApp.validate("approve",
+                Map.of("compare", "no/such/artifact.json", "out", "x.json")));
+        assertTrue(noSource.getMessage().contains("compare artifact not found"), noSource.getMessage());
+        ConfigException noOut = assertThrows(ConfigException.class, () -> AgentLensApp.validate("approve",
+                Map.of("compare", baseline.toString())));
+        assertTrue(noOut.getMessage().contains("approve requires --out"), noOut.getMessage());
+        assertDoesNotThrow(() -> AgentLensApp.validate("approve",
+                Map.of("compare", baseline.toString(), "out", tempDir.resolve("out.json").toString())));
+    }
+
+    @Test
     void garbageIntegersAreRejectedInsteadOfSilentlyDefaulted() {
         assertEquals(1, AgentLensApp.requireInt(Map.of(), "repeats", 1));
         assertEquals(5, AgentLensApp.requireInt(Map.of("repeats", "5"), "repeats", 1));

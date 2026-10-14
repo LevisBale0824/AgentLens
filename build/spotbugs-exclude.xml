@@ -8,10 +8,21 @@
     ExperimentRunner must write run summaries into the caller's store, so a
     defensive copy is impossible (JsonlRunStore wraps a live file) and would
     change behavior. The field is private and never returned to callers.
+
+  - ApprovedBaseline$Baseline EI_EXPOSE_REP: the record's collection components
+    (evaluatorNames, casePassRates) are defensively copied in the compact
+    constructor via List.copyOf / Map.copyOf, so the accessors return immutable
+    collections. SpotBugs 4.8.3 does not track the copies through this nested
+    record's canonical constructor (the identical pattern in CorpusLoader
+    passes) - detector limitation, not an exposed representation.
 -->
 <FindBugsFilter>
   <Match>
     <Class name="com.agentlens.eval.ExperimentRunner"/>
     <Bug pattern="EI_EXPOSE_REP2"/>
+  </Match>
+  <Match>
+    <Class name="com.agentlens.eval.ApprovedBaseline$Baseline"/>
+    <Bug pattern="EI_EXPOSE_REP"/>
   </Match>
 </FindBugsFilter>

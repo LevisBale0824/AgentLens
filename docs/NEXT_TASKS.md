@@ -272,8 +272,13 @@ P2 LLM Judge / Web UI / 外部集成
     8 负例，CorpusLoader 6 单测 + mock 行为 5 新单测）。
   - ✅ Dashboard 基线/候选**逐用例 diff**（P0-C）：`/api/diff` 按 taskId 对齐两版本最新
     run，FLIP_TO_PASS/FLIP_TO_FAIL 行高亮、failing 侧 judge 理由列、行点击下钻 trace。
-  - ⬜ CI 门禁契约细化：质量回归与工具错误退出码分离（promptfoo 100/1 模式）+
-    `approved-baseline.json` 门禁工件固定 dataset/评测器版本（Langfuse 双发布策略）。
+  - ✅ CI 门禁契约细化（P0-D，ROADMAP 7.12）：退出码 0/100/1/2 分离 + `approved-baseline.json`
+    门禁工件（固定数据集 sha256/评测器集合/逐用例 passRate，`approve` 双发布第二拍）+
+    `compare --approved` 冻结基线路径（漂移零成本即拒，dsh 省一半配额）。
+
+- **P0 四项已全部落地**（2026-10-14：语料文件化 `8239ffe` / otel-receive `b7ebf2a` /
+  看板逐用例 diff `04619fc` / 门禁契约本项）；下一步从 P1 清单挑：口径对齐 P1-B
+  （pass^k + 证据链注入评审）或语料扩充 P1-C（Cloud-OpsBench 导入，754 案例 MIT）。
 - **P1**：分数三来源模型（judge/人工/外部 API 统一挂 run）+ 人工复核队列；存原始 k 次分数、
   pass@k/pass^k/at_least_k 事后重算（Inspect epochs 模式）；p50/p95/成本时间序列；trace 瀑布图；
   断言代数（`not-` 反转/单条权重/assert-set k-of-n）；scorer 契约 {value, answer, explanation, reason}。

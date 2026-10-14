@@ -97,6 +97,12 @@ AgentLensApp judge-calibrate --judge --samples 2 --out output/judge-calibration.
 # wrong_conclusion / fabricated_evidence / partial_evidence 边界行为，语料版本写入结果）
 AgentLensApp judge-calibrate --judge --corpus data/judge-calibration-corpus.json --samples 1
 
+# 版本对比 + 门禁（P0-D 双发布）：先发布对比结果，人工审阅后固化为 approved baseline，之后门禁对冻结基线
+AgentLensApp compare --baseline correct --candidate flaky --out output/compare-artifact.json
+AgentLensApp approve --compare output/compare-artifact.json --out baseline/approved-baseline.json
+AgentLensApp compare --baseline x --candidate correct --approved baseline/approved-baseline.json
+# 退出码契约：0=通过，100=质量回归，1=工具错误，2=配置错误（数据集/评测器漂移在跑任何 Agent 前即拒）
+
 # 静态分析门禁（P2-5）：Checkstyle + SpotBugs 双检（CI 的 quality 作业同款）
 mvn -Pquality verify
 ```

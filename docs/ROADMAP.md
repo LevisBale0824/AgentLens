@@ -582,6 +582,28 @@ OpenLLMetry、OpenInference 自动埋点)把 OTLP/HTTP exporter 指到本端点,
 - **测试**:6 看板测试(覆盖五种判定行、显式参数对比、理由列、页面区块、单版本/空库
   降级),全量 -Pquality verify 绿。
 
+### 7.12 P0-D 门禁契约: 退出码分离 + approved-baseline 工件(已落地)
+
+**退出码契约**(promptfoo 100/1 模式,CI 可区分"Agent 变差"与"工具坏了"):
+`0`=门禁通过;`100`=质量回归(run/compare/dsh-live 的门禁失败,stderr 打印
+`gate regression (exit 100)` + 契约说明,结构化日志 `gate.regression`);
+`1`=工具/基础设施错误(未捕获异常,如存储锁死);`2`=配置错误(ConfigException,原有)。
+
+**approved-baseline 工件**(Langfuse 双发布模型,`ApprovedBaseline`/`ApprovedGate` eval 模块):
+发布 ① `compare --out PATH` 落机器可读工件(数据集 sha256 + 评测器集合 + repeats +
+双侧逐用例 passRate + 门禁结论);人工审阅后发布 ② `approve --compare PATH --out
+baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^k/avgPassRate/
+逐用例 passRate 全部冻结,入库受版本管理)。之后 `compare --approved PATH`:
+
+- **零成本快速失败**:数据集 sha256 或评测器集合与审批时不一致 → ConfigException(exit 2),
+  **在任何 Agent 运行之前**;
+- **跳过活基线**:冻结工件直接替代 baseline 侧(dsh 路径省一半配额);
+- **门禁语义**:缺失结果即失败(被悄悄跳过的用例算回归,不算通过)+ 逐用例 passRate
+  不降 + 总体 pass^k 不降,违规逐条列出。
+- **测试**:9 单测(工件往返/结构校验/乱序评测器集合等价/数据集漂移/缺失用例/逐用例与
+  总体回归)+1 配置校验;真机闭环:发布→approve(20 案例)→同行为过门禁(exit 0)→
+  wrong_tool 候选回归(exit **100** 实证)→篡改数据集零运行即拒(exit 2 实证)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
