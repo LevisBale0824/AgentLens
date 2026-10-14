@@ -3,6 +3,9 @@
 > 调研日期：2026-10-13。方法：三路并行在线调研（官方文档与 GitHub 仓库为准），**未做本地部署验证**；
 > 规模数字为公开资料约数，许可/版本以各仓库当前状态为准。回答三个问题：
 > ① 哪些功能值得做进 AgentLens；② 业界如何产出报告、是否有专门网页、如何展示；③ 业界有哪些评测集、如何补强本项目 mock 语料。
+>
+> **原始调研记录**（完整视图清单与来源链接）：[① Langfuse/Phoenix 深析](../research/peer-research-langfuse-phoenix.md) ·
+> [② 评测框架报告形态](../research/peer-research-eval-frameworks.md) · [③ 公共评测集全景](../research/peer-research-agent-eval-datasets.md)
 
 ## 0. 结论速览
 
