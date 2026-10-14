@@ -9,3 +9,6 @@ output/
 output/runs.db
 output/runs.jsonl
 output/report.html
+
+.research/
+.research_*
