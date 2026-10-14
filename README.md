@@ -55,8 +55,8 @@ AgentLensApp compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenar
 AgentLensApp compare --adapter dsh --scenarios data/scenarios/dsh-compare-scenarios.json \
     --candidate-override "dshArgs=--model qwen2.5:3b"
 
-# 导入已有 DSH session log：zstd 解码 → 统一 Trace → 评测 + 诊断（零成本离线分析）
-AgentLensApp import --session PATH/TO/session.jsonl.zstd [--task ID]
+# 导入已有 DSH session log：zstd 解码 → 统一 Trace → 评测 + 诊断（零成本离线分析，结果落库 source=cli-import）
+AgentLensApp import --session PATH/TO/session.jsonl.zstd [--task ID] [--overwrite]
 
 # 导入 AIOpsLab session JSON（P2-2：真实外部 Agent 会话 → 统一 Trace → 评测 + 诊断，零成本）
 AgentLensApp import --aiopslab --session PATH/TO/<session_id>_<ts>.json
@@ -73,6 +73,9 @@ AgentLensApp report [--db PATH] [--out PATH]
 
 # 迷你 Web Dashboard（P2-4）：本地起服务，运行列表筛选 / 趋势 / trace+诊断详情 / 版本对比
 AgentLensApp serve [--db PATH] [--port N]        # 浏览器打开 http://127.0.0.1:{port}/
+#   看板"Import history"区（M1）：拖入 session.jsonl(.zstd) / OTLP NDJSON / AIOpsLab JSON，
+#   自动探测格式 → 评测落库（source=ui-import）→ 即刻出现在列表与版本 diff；
+#   等价 curl：POST /api/import?name=traces.ndjson（raw bytes, ≤64MB, ?overwrite=true）
 
 # 冒烟测试
 AgentLensApp demo

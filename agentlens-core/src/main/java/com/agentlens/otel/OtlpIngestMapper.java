@@ -45,6 +45,34 @@ public final class OtlpIngestMapper {
 
     private OtlpIngestMapper() {}
 
+    /**
+     * {@code service.name} from the first resource that carries one, else the
+     * fallback - the agent identity used when persisting an ingested trace.
+     */
+    public static String serviceName(Map<String, Object> payload, String fallback) {
+        if (payload.get("resourceSpans") instanceof List<?> resourceSpans) {
+            for (Object rs : resourceSpans) {
+                if (!(rs instanceof Map<?, ?> rsMap)) {
+                    continue;
+                }
+                if (!(rsMap.get("resource") instanceof Map<?, ?> res)) {
+                    continue;
+                }
+                if (!(res.get("attributes") instanceof List<?> attrList)) {
+                    continue;
+                }
+                for (Object item : attrList) {
+                    if (item instanceof Map<?, ?> attr && "service.name".equals(attr.get("key"))
+                            && attr.get("value") instanceof Map<?, ?> value
+                            && value.get("stringValue") != null) {
+                        return String.valueOf(value.get("stringValue"));
+                    }
+                }
+            }
+        }
+        return fallback;
+    }
+
     /** Converts an OTLP/JSON payload ("resourceSpans" tree) into runs, one per traceId. */
     public static List<AgentRun> fromOtlpJson(Map<String, Object> payload) {
         if (payload == null || !(payload.get("resourceSpans") instanceof List<?> resourceSpans))

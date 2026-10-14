@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -54,6 +55,72 @@ class DashboardServerTest {
         assertTrue(response.statusCode() == 200 || response.statusCode() == 404,
                 response.statusCode() + " for " + url);
         return response.body();
+    }
+
+    private HttpResponse<String> post(String url, byte[] body) throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+        return client.send(HttpRequest.newBuilder(URI.create(url))
+                        .header("Content-Type", "application/octet-stream")
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void importEndpointIngestsOtlpAndTagsProvenance() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("import.db"));
+             DashboardServer server = new DashboardServer(store, 0)) {
+            String base = server.baseUrl();
+            String ndjson = SessionImportServiceTest.otlpLine("run-imp-a", "task-imp-a", false) + "\n"
+                    + SessionImportServiceTest.otlpLine("run-imp-b", "task-imp-b", true) + "\n";
+            HttpResponse<String> response = post(base + "/api/import?name=traces.ndjson",
+                    ndjson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(200, response.statusCode(), response.body());
+            assertTrue(response.body().contains("run-imp-a"), response.body());
+            assertTrue(response.body().contains("OTLP_NDJSON"), response.body());
+
+            String runs = get(base + "/api/runs");
+            assertTrue(runs.contains("run-imp-a"), runs);
+            assertTrue(runs.contains("ui-import"), runs);
+            assertTrue(get(base + "/api/runs/run-imp-a").contains("ingest"),
+                    "run detail should carry the ingest provenance");
+        }
+    }
+
+    @Test
+    void importEndpointSkipsExistingRunsAndOverwriteReplaces() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("import.db"));
+             DashboardServer server = new DashboardServer(store, 0)) {
+            String base = server.baseUrl();
+            byte[] body = SessionImportServiceTest.otlpLine("run-imp-a", "task-imp-a", false)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            assertEquals(200, post(base + "/api/import?name=t.ndjson", body).statusCode());
+            HttpResponse<String> second = post(base + "/api/import?name=t.ndjson", body);
+            assertEquals(200, second.statusCode(), second.body());
+            assertTrue(second.body().contains("run already exists"), second.body());
+
+            HttpResponse<String> overwrite = post(base + "/api/import?name=t.ndjson&overwrite=true", body);
+            assertEquals(200, overwrite.statusCode(), overwrite.body());
+            assertTrue(overwrite.body().contains("run-imp-a"), overwrite.body());
+            assertFalse(overwrite.body().contains("run already exists"), overwrite.body());
+        }
+    }
+
+    @Test
+    void importEndpointRejectsGetAndUnknownPayloads() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("import.db"));
+             DashboardServer server = new DashboardServer(store, 0)) {
+            String base = server.baseUrl();
+            HttpClient client = HttpClient.newHttpClient();
+            HttpResponse<String> getImport = client.send(
+                    HttpRequest.newBuilder(URI.create(base + "/api/import")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(405, getImport.statusCode());
+
+            HttpResponse<String> unknown = post(base + "/api/import?name=notes.txt",
+                    "plain prose, not json".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(400, unknown.statusCode());
+            assertTrue(unknown.body().contains("unrecognized format"), unknown.body());
+        }
     }
 
     @Test

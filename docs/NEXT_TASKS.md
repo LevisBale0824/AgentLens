@@ -288,6 +288,9 @@ P2 LLM Judge / Web UI / 外部集成
   [ui-history-analysis-plan.md](reports/ui-history-analysis-plan.md)，交互原型
   [docs/prototypes/ui-history-analysis.html](../prototypes/ui-history-analysis.html)。
   竞品参照：Jaeger trace JSON 上传、Inspect/promptfoo 本地 viewer、LangSmith "add to dataset"。
+  **M1 已落地（2026-10-14）**：`SessionImportService` 统一路径 + `POST /api/import` + 看板拖拽区
+  + source 列筛选 + CLI `import --session` 落库补齐（ROADMAP 7.13）；剩 M2（瀑布时间线/工件
+  查看页）与 M3（保存为场景/标注/回放）。
 - **P2**：`bfcl-import`（BFCL 期望调用序列→Scenario）；τ-bench 政策场景→ComplianceEvaluator 用例；
   语料合成工作流（文档→LLM 生成→人工筛选固化）；Dashboard 静态 bundle 导出（PR 工件）；
   部位级 judge 绑定；失败 run 聚类；原生 DeepEval subprocess 阶段二（G-Eval/DAG）。

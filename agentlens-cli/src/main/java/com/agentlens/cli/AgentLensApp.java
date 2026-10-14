@@ -125,7 +125,8 @@ public final class AgentLensApp {
         }
         String session = opts.get("session");
         if (session == null || session.isBlank()) {
-            System.err.println("usage: import --session PATH (a DSH session.jsonl or session.jsonl.zstd) [--task ID]");
+            System.err.println("usage: import --session PATH (a DSH session.jsonl or session.jsonl.zstd)"
+                    + " [--task ID] [--overwrite] [--db PATH]");
             System.exit(2);
         }
         var events = com.agentlens.adapters.dsh.DshSessionLogReader.read(Path.of(session));
@@ -155,10 +156,28 @@ public final class AgentLensApp {
         System.out.println("  evaluation:");
         results.forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
                 r.evaluator(), r.passed(), r.reason()));
+        if (opts.containsKey("judge")) {
+            System.out.println("  (judge scores are informational here and not persisted)");
+        }
         var diagnoses = new com.agentlens.eval.DiagnosisEngine().diagnose(task, run, results);
         System.out.printf("  diagnoses: %d%n", diagnoses.size());
         diagnoses.forEach(d -> System.out.printf("    %-15s %-45s evidence=%s%n",
                 d.layer(), d.issue(), d.evidence()));
+
+        // Persist through the shared import service so CLI history lands in the
+        // same store the board reads (M1 of the UI history-analysis plan).
+        try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
+            var importer = new SessionImportService(sqlite);
+            try {
+                var saved = importer.importDshRun(events,
+                        new SessionImportService.Options("cli-import", opts.get("task"),
+                                opts.containsKey("overwrite")));
+                System.out.printf("  saved: %s (agent=%s, source=cli-import, taskId=%s)%n",
+                        saved.run().runId(), saved.agentName(), saved.run().taskId());
+            } catch (SessionImportService.RunExistsException e) {
+                System.out.println("  skipped: " + e.getMessage() + " (--overwrite to re-import)");
+            }
+        }
 
         java.util.function.Consumer<AgentRun> otel = otelSink(opts);
         if (otel != null) otel.accept(run);
@@ -205,15 +224,18 @@ public final class AgentLensApp {
                 d.layer(), d.issue(), d.evidence()));
 
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
-            sqlite.saveRun(run, "aiopslab:" + imported.agentName());
-            sqlite.saveEvaluation(new com.agentlens.core.EvaluationRun(run.runId(), run.taskId(),
-                    "aiopslab", "imported", run.startedAt(), results,
-                    Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens(),
-                            "problemId", String.valueOf(imported.problemId()))));
+            var importer = new SessionImportService(sqlite);
+            try {
+                var saved = importer.importAiopslabRun(imported,
+                        new SessionImportService.Options("cli-import", null, opts.containsKey("overwrite")));
+                System.out.printf("  saved: %s (agent=%s, source=cli-import)%n",
+                        saved.run().runId(), saved.agentName());
+            } catch (SessionImportService.RunExistsException e) {
+                System.out.println("  skipped: " + e.getMessage() + " (--overwrite to re-import)");
+            }
             log.event("info", "run.completed", "runId", run.runId(), "taskId", run.taskId(),
                     "status", run.status(), "durationMs", run.durationMs(), "source", "aiopslab");
         }
-        System.out.printf("  persisted run %s (adapter=aiopslab, version=imported)%n", run.runId());
         java.util.function.Consumer<AgentRun> aiopslabOtel = otelSink(opts);
         if (aiopslabOtel != null) aiopslabOtel.accept(run);
     }

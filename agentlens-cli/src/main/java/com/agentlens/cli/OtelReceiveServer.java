@@ -1,7 +1,6 @@
 package com.agentlens.cli;
 
 import com.agentlens.core.AgentRun;
-import com.agentlens.core.EvaluationRun;
 import com.agentlens.eval.SqliteRunStore;
 import com.agentlens.otel.OtlpIngestMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,10 +36,10 @@ public final class OtelReceiveServer {
     private static final int MAX_BODY_BYTES = 32 * 1024 * 1024;
 
     private final HttpServer server;
-    private final SqliteRunStore store;
+    private final SessionImportService imports;
 
     public OtelReceiveServer(SqliteRunStore store, int port) throws IOException {
-        this.store = store;
+        this.imports = new SessionImportService(store);
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         server.setExecutor(Executors.newFixedThreadPool(4));
         server.createContext("/v1/traces", this::handleTraces);
@@ -82,41 +81,14 @@ public final class OtelReceiveServer {
         }
     }
 
-    /** Persists one ingested run with its deterministic evaluation. */
+    /**
+     * Persists one ingested run through the shared import service. Overwrite
+     * stays on: OTLP exporters retry the same payload after transport errors,
+     * and an upsert matches the pre-service behavior.
+     */
     private void persist(AgentRun run, Map<String, Object> payload) throws IOException {
-        String agentName = serviceName(payload, "otel");
-        // No scenario context exists for ingested traces; the synthetic task gives
-        // RunLimitEvaluator a generous step budget while keeping evaluators honest.
-        var task = new com.agentlens.core.AgentTask(run.taskId(),
-                "ingested OTLP trace (no scenario context)", Map.of(), 50);
-        var evaluations = new com.agentlens.eval.EvaluatorRegistry()
-                .register(new com.agentlens.eval.TaskCompletionEvaluator())
-                .register(new com.agentlens.eval.RunLimitEvaluator())
-                .evaluate(task, run);
-        store.saveRun(run, agentName);
-        store.saveEvaluation(new EvaluationRun(run.runId(), run.taskId(), agentName, "ingest",
-                run.startedAt(), evaluations,
-                Map.of("ingest", "otlp")));
-    }
-
-    /** service.name from the first resource that carries one. */
-    private String serviceName(Map<String, Object> payload, String fallback) {
-        if (payload.get("resourceSpans") instanceof List<?> resourceSpans) {
-            for (Object rs : resourceSpans) {
-                if (!(rs instanceof Map<?, ?> rsMap)) continue;
-                Object resource = rsMap.get("resource");
-                if (!(resource instanceof Map<?, ?> res)) continue;
-                Object attrs = res.get("attributes");
-                if (!(attrs instanceof List<?> attrList)) continue;
-                for (Object item : attrList) {
-                    if (item instanceof Map<?, ?> attr && "service.name".equals(attr.get("key"))
-                            && attr.get("value") instanceof Map<?, ?> value
-                            && value.get("stringValue") != null)
-                        return String.valueOf(value.get("stringValue"));
-                }
-            }
-        }
-        return fallback;
+        imports.importOtelRun(run, OtlpIngestMapper.serviceName(payload, "otel"),
+                "otel-receive", true);
     }
 
     private void handleInfo(HttpExchange exchange) throws IOException {

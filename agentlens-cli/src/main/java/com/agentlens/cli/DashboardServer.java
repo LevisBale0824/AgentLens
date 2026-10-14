@@ -35,18 +35,30 @@ import java.util.Optional;
  * GET /api/diff          -> P0-C per-case baseline/candidate diff (pass/fail
  *                           flips highlighted, judge reason of the failing
  *                           side, row click drills into the trace)
+ * POST /api/import       -> M1 of the UI history-analysis plan: upload a
+ *                           historical session file as raw bytes (?name=,
+ *                           ?overwrite=) - the format is sniffed (DSH session
+ *                           JSONL(.zstd) / OTLP NDJSON / AIOpsLab JSON), the
+ *                           trace is evaluated and persisted with
+ *                           source=ui-import, so it shows up in the board
+ *                           immediately.
  * </pre>
  *
- * Read-only by design: the dashboard never mutates the store.
+ * The dashboard is read-only except POST /api/import - the single, tagged
+ * write path (imports never delete and never overwrite without ?overwrite).
  */
 public final class DashboardServer implements AutoCloseable {
+    private static final int MAX_IMPORT_BYTES = 64 * 1024 * 1024;
+
     private final SqliteRunStore store;
+    private final SessionImportService importService;
     private final HttpServer server;
     private final ObjectMapper json = new ObjectMapper();
     private final DiagnosisEngine diagnosisEngine = new DiagnosisEngine();
 
     public DashboardServer(SqliteRunStore store, int port) throws IOException {
         this.store = store;
+        this.importService = new SessionImportService(store);
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", exchange -> respond(exchange, 200, "text/html; charset=utf-8", INDEX_HTML));
         server.createContext("/api/summary", exchange ->
@@ -69,6 +81,23 @@ public final class DashboardServer implements AutoCloseable {
         server.createContext("/api/diff", exchange -> {
             var query = parseQuery(exchange.getRequestURI().getRawQuery());
             respondJson(exchange, 200, diff(query.get("baseline"), query.get("candidate")));
+        });
+        server.createContext("/api/import", exchange -> {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                respondJson(exchange, 405, Map.of("error",
+                        "POST the file as raw bytes to /api/import (?name=<file.name>)"));
+                return;
+            }
+            byte[] body = exchange.getRequestBody().readNBytes(MAX_IMPORT_BYTES + 1);
+            if (body.length > MAX_IMPORT_BYTES) {
+                respondJson(exchange, 413, Map.of("error", "file too large (limit is 64MB)"));
+                return;
+            }
+            var query = parseQuery(exchange.getRequestURI().getRawQuery());
+            var options = new SessionImportService.Options("ui-import", null,
+                    "true".equalsIgnoreCase(query.getOrDefault("overwrite", "false")));
+            var outcome = importService.importFile(query.getOrDefault("name", "upload"), body, options);
+            respondJson(exchange, outcome.error() == null ? 200 : 400, importOutcomeMap(outcome));
         });
         server.start();
     }
@@ -323,6 +352,30 @@ public final class DashboardServer implements AutoCloseable {
         out.put("agent", evaluation.<Object>map(com.agentlens.core.EvaluationRun::agentName).orElse(null));
         out.put("agentVersion", evaluation.<Object>map(com.agentlens.core.EvaluationRun::agentVersion).orElse(null));
         out.put("observedModel", evaluation.map(e -> e.metadata().get("observedModel")).orElse(null));
+        out.put("source", evaluation
+                .map(e -> String.valueOf(e.metadata().getOrDefault("source", "native")))
+                .orElse("native"));
+        return out;
+    }
+
+    /** Flattens an import outcome for the /api/import response body. */
+    private static Map<String, Object> importOutcomeMap(SessionImportService.Outcome outcome) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("file", outcome.fileName());
+        out.put("kind", outcome.kind().name());
+        out.put("imported", outcome.runs().stream().map(r -> {
+            Map<String, Object> run = new LinkedHashMap<String, Object>();
+            run.put("runId", r.run().runId());
+            run.put("taskId", r.run().taskId());
+            run.put("agent", r.agentName());
+            run.put("status", r.run().status().name());
+            run.put("passed", r.results().stream().allMatch(EvaluationResult::passed));
+            return run;
+        }).toList());
+        out.put("skipped", outcome.skipped());
+        if (outcome.error() != null) {
+            out.put("error", outcome.error());
+        }
         return out;
     }
 
@@ -405,6 +458,13 @@ public final class DashboardServer implements AutoCloseable {
               tr.flip-bad:hover{background:#4a2424} tr.flip-good:hover{background:#184229}
               code{background:#0b101b;padding:1px 6px;border-radius:4px;font-size:12px}
               .muted{color:var(--dim)}
+              #drop{border:1.5px dashed var(--line);border-radius:10px;padding:16px;text-align:center;
+                    color:var(--dim);cursor:pointer;margin-bottom:10px;transition:.2s}
+              #drop.over{border-color:var(--accent);color:var(--accent);background:#12233f}
+              .pill.src{background:#0e2e33;color:#2dd4bf}
+              .imp{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+                   border-radius:8px;padding:8px 14px;margin:6px 0;font:12px ui-monospace,Consolas,monospace}
+              .imp.bad{border-left-color:var(--bad)}
               </style></head><body>
             <header><h1>AgentLens Dashboard <span id="sub">loading…</span></h1></header>
             <main>
@@ -423,15 +483,21 @@ public final class DashboardServer implements AutoCloseable {
               <table><thead><tr><th>task</th><th>baseline</th><th>candidate</th>
                 <th>change</th><th>judge reason (failing side)</th></tr></thead>
                 <tbody id="diff"></tbody></table>
+              <h2>Import history <span class="pill src">M1</span></h2>
+              <div id="drop">⇩ drag in session.jsonl(.zstd) / OTLP NDJSON / AIOpsLab JSON - or click to choose · ≤64MB each</div>
+              <input type="file" id="fileInput" multiple style="display:none">
+              <div id="importOut"></div>
               <h2>Runs</h2>
               <div style="margin-bottom:8px">
                 <input id="q" placeholder="filter by task…">
                 <select id="status"><option value="">status: all</option>
                   <option>SUCCESS</option><option>FAILED</option><option>TIMEOUT</option><option>CANCELLED</option></select>
                 <select id="version"><option value="">version: all</option></select>
+                <select id="source"><option value="">source: all</option>
+                  <option>ui-import</option><option value="native">native</option></select>
                 <label class="muted"><input type="checkbox" id="onlyFailed" style="margin-right:4px">only failures</label>
               </div>
-              <table><thead><tr><th>started</th><th>task</th><th>status</th><th>eval</th>
+              <table><thead><tr><th>started</th><th>task</th><th>source</th><th>status</th><th>eval</th>
                 <th>version</th><th>model</th><th>dur ms</th><th>events</th></tr></thead>
                 <tbody id="runs"></tbody></table>
               <div id="detail"></div>
@@ -496,22 +562,29 @@ public final class DashboardServer implements AutoCloseable {
             }
 
             function renderRuns() {              const q = $("q").value.toLowerCase(), st = $("status").value,
-                    ver = $("version").value, onlyBad = $("onlyFailed").checked;
+                    ver = $("version").value, src = $("source").value, onlyBad = $("onlyFailed").checked;
               const rows = RUNS.filter(r =>
                 (!q || r.taskId.toLowerCase().includes(q)) &&
                 (!st || r.status === st) &&
                 (!ver || r.agentVersion === ver) &&
+                (!src || r.source === src) &&
                 (!onlyBad || !r.passed));
               $("runs").innerHTML = rows.map(r =>
                 `<tr onclick="openRun('${esc(r.runId)}')">
                    <td class="muted">${esc(r.startedAt.replace("T", " ").slice(0, 19))}</td>
                    <td><code>${esc(r.taskId)}</code></td>
+                   <td>${r.source === "ui-import" ? pill("◉ imported", "src")
+                        : '<span class="muted">native</span>'}</td>
                    <td>${r.status === "SUCCESS" ? pill(r.status, "ok") : pill(r.status, "bad")}</td>
                    <td>${r.passed ? pill("PASS", "ok") : pill("FAIL", "bad")}</td>
                    <td>${esc(r.agentVersion ?? "-")}</td>
                    <td class="muted">${esc(r.observedModel ?? "-")}</td>
                    <td>${r.durationMs}</td><td>${r.events}</td></tr>`).join("");
             }
+
+            const srcPill = d => (d.evaluation && d.evaluation.metadata && d.evaluation.metadata.source
+                && d.evaluation.metadata.source !== "native")
+                ? " " + pill("◉ " + d.evaluation.metadata.source, "src") : "";
 
             async function openRun(id) {
               const d = await j("/api/runs/" + id);
@@ -520,6 +593,7 @@ public final class DashboardServer implements AutoCloseable {
               const r = d.run;
               let html = `<h2 style="margin-top:4px"><code>${esc(r.taskId)}</code>
                           ${r.status === "SUCCESS" ? pill(r.status, "ok") : pill(r.status, "bad")}
+                          ${srcPill(d)}
                           <span class="muted">· ${r.durationMs}ms · ${r.events} events</span></h2>`;
               if (d.finalAnswer) html += `<div class="ev"><b>final answer:</b> ${esc(d.finalAnswer)}</div>`;
               if (d.error) html += `<div class="ev"><b style="color:var(--bad)">error:</b> ${esc(d.error)}</div>`;
@@ -543,14 +617,58 @@ public final class DashboardServer implements AutoCloseable {
               el.scrollIntoView({behavior: "smooth"});
             }
 
+            const drop = $("drop");
+            drop.onclick = () => $("fileInput").click();
+            drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+            drop.ondragleave = () => drop.classList.remove("over");
+            drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); importFiles(e.dataTransfer.files); };
+            $("fileInput").onchange = e => { importFiles(e.target.files); e.target.value = ""; };
+
+            async function importFiles(files) {
+              for (const f of files) {
+                const ph = document.createElement("div");
+                ph.className = "imp"; ph.textContent = "◌ " + f.name + " - importing…";
+                $("importOut").prepend(ph);
+                try {
+                  const r = await fetch("/api/import?name=" + encodeURIComponent(f.name),
+                      { method: "POST", body: await f.arrayBuffer(),
+                        headers: { "Content-Type": "application/octet-stream" } });
+                  ph.remove();
+                  renderImport(await r.json(), r.ok);
+                } catch (err) {
+                  ph.remove();
+                  $("importOut").innerHTML =
+                    `<div class="imp bad">✕ ${esc(f.name)} - ${esc(err)}</div>` + $("importOut").innerHTML;
+                }
+              }
+              await boot();
+            }
+
+            function renderImport(o, ok) {
+              const rows = (o.imported ?? []).map(r =>
+                `<div class="imp">✓ ${pill(o.kind ?? "?", "src")} <code>${esc(r.runId)}</code>
+                 ${esc(r.taskId)} ${r.passed ? pill("PASS", "ok") : pill("FAIL", "bad")}
+                 <span class="muted">${esc(r.agent ?? "")} · source=ui-import</span></div>`);
+              (o.skipped ?? []).forEach(s =>
+                rows.push(`<div class="imp">⤼ ${pill("SKIPPED", "warn")}
+                 <span class="muted">${esc(s)}</span></div>`));
+              if (o.error) rows.push(`<div class="imp bad">✕ ${esc(o.file ?? "")}
+                 [${esc(o.kind ?? "?")}] ${esc(o.error)}</div>`);
+              $("importOut").innerHTML = rows.join("") + $("importOut").innerHTML;
+            }
+
             async function boot() {
               renderCards(await j("/api/summary"));
               renderScenarios(await j("/api/scenarios"));
               RUNS = await j("/api/runs");
+              $("version").innerHTML = '<option value="">version: all</option>';
               [...new Set(RUNS.map(r => r.agentVersion).filter(Boolean))].forEach(v => {
                 const o = document.createElement("option"); o.textContent = v; $("version").appendChild(o);
               });
               renderTrend(RUNS); renderRuns(); loadDiff();
+            }
+
+            function wireOnce() {
               ["diffBase", "diffCand"].forEach(id => $(id).addEventListener("change", () =>
                 j(`/api/diff?baseline=${encodeURIComponent($("diffBase").value)}&candidate=${encodeURIComponent($("diffCand").value)}`)
                   .then(d => {
@@ -568,9 +686,10 @@ public final class DashboardServer implements AutoCloseable {
                          <td class="muted">${esc(r.judgeReason ?? "-")}</td></tr>`;
                     }).join("") || '<tr><td colspan="5" class="muted">no cases</td></tr>';
                   })));
-              ["q", "status", "version", "onlyFailed"].forEach(id =>
+              ["q", "status", "version", "source", "onlyFailed"].forEach(id =>
                 $(id).addEventListener("input", renderRuns));
             }
+            wireOnce();
             boot().catch(e => { $("sub").textContent = "load failed: " + e; });
             </script></body></html>
             """;

@@ -604,6 +604,30 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   总体回归)+1 配置校验;真机闭环:发布→approve(20 案例)→同行为过门禁(exit 0)→
   wrong_tool 候选回归(exit **100** 实证)→篡改数据集零运行即拒(exit 2 实证)。
 
+### 7.13 看板 UI 导入历史数据(M1 已落地)
+
+**动机**:历史数据(DSH 会话 JSONL、OTLP 轨迹 NDJSON、AIOpsLab 结果 JSON)此前只能 CLI 导入,
+且 `import --session`(DSH 路径)只打印不落库——分析结果进不了 show/report/serve。
+对标 Jaeger trace JSON 上传、Inspect/promptfoo 本地 viewer(设计详见
+`docs/reports/ui-history-analysis-plan.md`,交互原型 `docs/prototypes/ui-history-analysis.html`)。
+
+- **`SessionImportService`(cli)**:唯一共享导入路径——格式探测(文件名 + 首行/整文本嗅探:
+  `.zstd`→DSH 容器、含 `resourceSpans`→OTLP NDJSON、`trace`+`session_id`/`problem_id`→
+  AIOpsLab、`type` 字段 JSONL→DSH 明文)→ 统一 Trace 映射 → 确定性评测 → 落库,
+  全量打 `source` 溯源标(`ui-import`/`cli-import`/`otel-receive`);
+  runId 已存在默认跳过,`?overwrite`/`--overwrite` 显式覆盖(otel-receive 保持 upsert
+  以兼容 OTLP 客户端重试)。
+- **`POST /api/import`**(看板唯一写路径,64MB 上限):raw bytes 上传 + `?name=` 文件名,
+  逐 run 返回 imported/skipped;`GET /api/runs` 增加 `source` 字段,看板 Runs 表加
+  source 列与筛选,新增"Import history"拖拽导入区(导入后自动刷新全页)。
+- **DSH import 落库补齐**:CLI `import --session` 现在经同一服务持久化(source=cli-import,
+  默认 taskId `dsh-<sessionId 前 8 位>`,`--task` 覆盖);AIOpsLab 导入改走同一服务
+  (评测器 agentName 统一为 `aiopslab:<name>`,metadata 增 source)。
+- **测试**:+7 服务单测(四格式探测/DSH 落库溯源/taskId 覆盖/NDJSON 多 run/跳过与
+  覆盖/AIOpsLab 策略评测器/未知格式拒绝)+3 端点测试(OTLP 导入 200+source/冲突跳过与
+  overwrite/GET 405+未知 400);`OtelReceiveServer` 收编进服务(原 serviceName/persist
+  逻辑上移 `OtlpIngestMapper.serviceName`)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
