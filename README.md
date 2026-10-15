@@ -72,10 +72,13 @@ AgentLensApp show --run list          # 列出全部 run ID
 AgentLensApp report [--db PATH] [--out PATH]
 
 # 迷你 Web Dashboard（P2-4）：本地起服务，运行列表筛选 / 趋势 / trace+诊断详情 / 版本对比
-AgentLensApp serve [--db PATH] [--port N]        # 浏览器打开 http://127.0.0.1:{port}/
+AgentLensApp serve [--db PATH] [--port N] [--artifacts FILE,FILE]   # 浏览器打开 http://127.0.0.1:{port}/
 #   看板"Import history"区（M1）：拖入 session.jsonl(.zstd) / OTLP NDJSON / AIOpsLab JSON，
 #   自动探测格式 → 评测落库（source=ui-import）→ 即刻出现在列表与版本 diff；
 #   等价 curl：POST /api/import?name=traces.ndjson（raw bytes, ≤64MB, ?overwrite=true）
+#   分析增强（M2）：run 详情瀑布时间线 + raw JSON 抽屉；Artifacts 区直接读
+#   output/、baseline/ 下的 compare / 标定 / approved-baseline JSON（或 --artifacts
+#   指定文件）；导入历史（含失败原因）见"Recent imports"表（GET /api/imports）
 
 # 冒烟测试
 AgentLensApp demo

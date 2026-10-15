@@ -628,6 +628,33 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   overwrite/GET 405+未知 400);`OtelReceiveServer` 收编进服务(原 serviceName/persist
   逻辑上移 `OtlpIngestMapper.serviceName`)。
 
+### 7.14 看板分析增强(M2 已落地)
+
+延续 7.13 的"历史 JSON 进看板",把看板从"能看 run 列表"推进到"能分析单个 run、
+能直接读工件"(瀑布对标 Jaeger trace view):
+
+- **瀑布时间线**:run 详情 trace 时间线新增 waterfall/list 切换——时间比例条
+  (Jaeger 式,按事件 timestamp 定位、durationMs 定宽)、事件类型着色
+  (MODEL_CALL/TOOL_CALL/TOOL_RESULT/PLAN/RETRIEVAL/MEMORY_*/FINAL_ANSWER/ERROR)、
+  0/50%/100% 时间轴与图例;事件时间戳全部重合(如 mock run)时自动退化为
+  顺序布局。
+- **原始 JSON 抽屉**:详情页底部折叠"raw run JSON",一键看完整 detail 载荷
+  (events/evaluation/diagnoses),配合导入分析"先看渲染、再挖原始"。
+- **工件查看页**:新增 `GET /api/artifacts`(列表 + 类型嗅探)与
+  `GET /api/artifacts/{id}`(解析后内容)。serve 默认扫描 `output/`、`baseline/`
+  下的 `*.json`(上限 20),也可 `serve --artifacts FILE,FILE` 指定(启动时校验存在)。
+  三类结构化渲染:approved-baseline(pass^k 卡片 + 逐 case 通过率)、
+  compare(双侧 pass^k + gate 徽章 + 红/绿翻转型逐 case diff 表)、
+  calibration(样本数/判定一致率/corpus 版本卡片 + 按 behavior 聚合表 + 样本明细);
+  其余 JSON 走通用 <pre> 渲染。
+- **导入历史记录**:`SqliteRunStore` 新增 `import_log` 表
+  (`recordImport`/`importHistory`),`GET /api/imports` 暴露;UI/CLI/otel 每次导入
+  (成功、跳过、失败)都记一行(file/kind/source/imported/skipped/error,最新在前),
+  看板 Import history 区下方表格呈现——回答"这份库里的数据都是哪来的"。
+- **测试**:+1 store 导入日志往返测试;服务测试补 import_log 断言;+2 端点测试
+  (/api/imports 带内容、/api/artifacts 列表+解析+404);+1 配置校验测试
+  (serve --artifacts 文件必须存在);Checkstyle/SpotBugs 零告警。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

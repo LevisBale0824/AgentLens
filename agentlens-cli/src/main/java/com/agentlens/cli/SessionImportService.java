@@ -172,7 +172,7 @@ public final class SessionImportService {
                     }
                 }
                 case UNKNOWN -> {
-                    return new Outcome(name, kind, runs, skipped,
+                    return finish(name, kind, opts, runs, skipped,
                             "unrecognized format: expected a DSH session JSONL(.zstd), "
                                     + "OTLP/JSON NDJSON, or AIOpsLab results JSON");
                 }
@@ -180,9 +180,30 @@ public final class SessionImportService {
         } catch (RunExistsException e) {
             skipped.add(String.valueOf(e.getMessage()));
         } catch (Exception e) {
-            return new Outcome(name, kind, runs, skipped, String.valueOf(e.getMessage()));
+            return finish(name, kind, opts, runs, skipped, String.valueOf(e.getMessage()));
         }
-        return new Outcome(name, kind, runs, skipped, null);
+        return finish(name, kind, opts, runs, skipped, null);
+    }
+
+    /** Records the outcome to the import history log - best effort, never fatal. */
+    private Outcome finish(String name, Kind kind, Options opts, List<ImportedRun> runs,
+                           List<String> skipped, String error) {
+        try {
+            store.recordImport(name, kind.name(), opts.source(), runs.size(), skipped.size(), error);
+        } catch (IOException e) {
+            // history log is best effort; the import outcome itself stands
+        }
+        return new Outcome(name, kind, runs, skipped, error);
+    }
+
+    /** Import-log entry point for CLI flows that bypass {@link #importFile}. */
+    public void record(String fileName, Kind kind, String source,
+                       int imported, int skipped, String error) {
+        try {
+            store.recordImport(fileName, kind.name(), source, imported, skipped, error);
+        } catch (IOException e) {
+            // history log is best effort; the import outcome itself stands
+        }
     }
 
     /** Decodes DSH session events; zstd containers go through a temp file. */

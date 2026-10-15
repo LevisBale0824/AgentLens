@@ -90,6 +90,19 @@ public final class SqliteRunStore implements AutoCloseable {
                     )""");
             }
             ensureEvaluationMetadataColumn();
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS import_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        imported_at TEXT NOT NULL,
+                        file_name TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        imported INTEGER NOT NULL,
+                        skipped INTEGER NOT NULL,
+                        error TEXT
+                    )""");
+            }
         } catch (SQLException e) {
             throw new IOException("cannot open sqlite run store: " + file, e);
         }
@@ -248,6 +261,54 @@ public final class SqliteRunStore implements AutoCloseable {
             all.add(Map.entry(loadRun(runId).orElseThrow(), loadEvaluation(runId)));
         }
         return List.copyOf(all);
+    }
+
+    /**
+     * M2: appends one row to the import history log (what was imported from
+     * which file, under which source tag, with what outcome).
+     */
+    public void recordImport(String fileName, String kind, String source,
+                             int imported, int skipped, String error) throws IOException {
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "INSERT INTO import_log (imported_at, file_name, kind, source, imported, skipped, error)"
+                        + " VALUES (?,?,?,?,?,?,?)")) {
+            stmt.setString(1, java.time.Instant.now().toString());
+            stmt.setString(2, fileName);
+            stmt.setString(3, kind);
+            stmt.setString(4, source);
+            stmt.setInt(5, imported);
+            stmt.setInt(6, skipped);
+            stmt.setString(7, error);
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IOException("failed to record import", e);
+        }
+    }
+
+    /** M2: the import history log, newest first, capped at {@code limit} rows. */
+    public List<Map<String, Object>> importHistory(int limit) throws IOException {
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "SELECT imported_at, file_name, kind, source, imported, skipped, error"
+                        + " FROM import_log ORDER BY id DESC LIMIT ?")) {
+            stmt.setInt(1, Math.max(1, limit));
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("importedAt", rs.getString("imported_at"));
+                    row.put("file", rs.getString("file_name"));
+                    row.put("kind", rs.getString("kind"));
+                    row.put("source", rs.getString("source"));
+                    row.put("imported", rs.getInt("imported"));
+                    row.put("skipped", rs.getInt("skipped"));
+                    row.put("error", rs.getString("error"));
+                    out.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("failed to read import history", e);
+        }
+        return List.copyOf(out);
     }
 
     private List<AgentEvent> loadEvents(String runId) throws SQLException, IOException {

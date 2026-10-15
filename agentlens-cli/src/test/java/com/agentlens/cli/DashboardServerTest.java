@@ -239,4 +239,45 @@ class DashboardServerTest {
             assertTrue(empty.contains("\"rows\":[]"), empty);
         }
     }
+
+    @Test
+    void importLogServesRecentImportsOverApi() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("log.db"));
+             DashboardServer server = new DashboardServer(store, 0, List.of())) {
+            String base = server.baseUrl();
+            post(base + "/api/import?name=t.ndjson",
+                    SessionImportServiceTest.otlpLine("run-log-1", "task-log-1", false)
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            String imports = get(base + "/api/imports");
+            assertTrue(imports.contains("t.ndjson"), imports);
+            assertTrue(imports.contains("OTLP_NDJSON"), imports);
+            assertTrue(imports.contains("ui-import"), imports);
+        }
+    }
+
+    @Test
+    void artifactEndpointsServeListAndParsedContent() throws Exception {
+        Path approved = tempDir.resolve("approved-baseline.json");
+        java.nio.file.Files.writeString(approved,
+                "{\"formatVersion\":1,\"casePassRates\":{\"case-a\":1.0},\"approvedBy\":\"tester\","
+                        + "\"passPowK\":1.0,\"avgPassRate\":1.0,\"repeats\":2}");
+        Path calib = tempDir.resolve("judge-calibration.json");
+        java.nio.file.Files.writeString(calib,
+                "{\"corpusVersion\":1,\"samples\":[{\"behavior\":\"correct\",\"score\":0.5,"
+                        + "\"judgedPass\":true,\"expectedPass\":true,\"reason\":\"ok\"}]}");
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("art.db"));
+             DashboardServer server = new DashboardServer(store, 0, List.of(approved, calib))) {
+            String base = server.baseUrl();
+            String list = get(base + "/api/artifacts");
+            assertTrue(list.contains("approved-baseline"), list);
+            assertTrue(list.contains("calibration"), list);
+            assertTrue(list.contains("judge-calibration.json"), list);
+
+            String content = get(base + "/api/artifacts/1");
+            assertTrue(content.contains("calibration"), content);
+            assertTrue(content.contains("correct"), content);
+            assertTrue(get(base + "/api/artifacts/99").contains("no such artifact"));
+            assertTrue(get(base + "/api/artifacts/notanumber").contains("no such artifact"));
+        }
+    }
 }

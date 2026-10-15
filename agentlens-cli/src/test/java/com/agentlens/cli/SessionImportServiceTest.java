@@ -108,6 +108,13 @@ class SessionImportServiceTest {
             assertEquals("dsh-session", evaluation.agentName());
             assertTrue(evaluation.results().stream().anyMatch(r -> "task-completion".equals(r.evaluator())));
             assertTrue(evaluation.results().stream().anyMatch(r -> "run-limits".equals(r.evaluator())));
+            var log = store.importHistory(10);
+            assertEquals(1, log.size());
+            assertEquals("session.jsonl", log.get(0).get("file"));
+            assertEquals("DSH_SESSION", log.get(0).get("kind"));
+            assertEquals("ui-import", log.get(0).get("source"));
+            assertEquals(1, log.get(0).get("imported"));
+            assertEquals(0, log.get(0).get("skipped"));
         }
     }
 

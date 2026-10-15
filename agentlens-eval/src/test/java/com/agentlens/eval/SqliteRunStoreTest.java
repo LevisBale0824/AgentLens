@@ -140,4 +140,24 @@ class SqliteRunStoreTest {
             assertEquals(run2.events(), store.loadRun(run2.runId()).get().events());
         }
     }
+
+    @Test
+    void importLogRoundtripKeepsOutcomeAndOrdersNewestFirst() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("import-log.db"))) {
+            assertTrue(store.importHistory(10).isEmpty());
+            store.recordImport("a.ndjson", "OTLP_NDJSON", "ui-import", 2, 0, null);
+            store.recordImport("b.jsonl", "DSH_SESSION", "cli-import", 0, 1, "run already exists: x");
+            var history = store.importHistory(10);
+            assertEquals(2, history.size());
+            assertEquals("b.jsonl", history.get(0).get("file"));
+            assertEquals("DSH_SESSION", history.get(0).get("kind"));
+            assertEquals("cli-import", history.get(0).get("source"));
+            assertEquals(0, history.get(0).get("imported"));
+            assertEquals(1, history.get(0).get("skipped"));
+            assertEquals("run already exists: x", history.get(0).get("error"));
+            assertEquals("a.ndjson", history.get(1).get("file"));
+            assertFalse(history.get(1).containsKey("error") && history.get(1).get("error") != null);
+            assertEquals(1, store.importHistory(1).size());
+        }
+    }
 }

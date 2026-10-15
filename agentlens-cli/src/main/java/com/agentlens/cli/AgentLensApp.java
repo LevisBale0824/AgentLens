@@ -168,15 +168,20 @@ public final class AgentLensApp {
         // same store the board reads (M1 of the UI history-analysis plan).
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
             var importer = new SessionImportService(sqlite);
+            int savedCount = 0;
             try {
                 var saved = importer.importDshRun(events,
                         new SessionImportService.Options("cli-import", opts.get("task"),
                                 opts.containsKey("overwrite")));
+                savedCount = 1;
                 System.out.printf("  saved: %s (agent=%s, source=cli-import, taskId=%s)%n",
                         saved.run().runId(), saved.agentName(), saved.run().taskId());
             } catch (SessionImportService.RunExistsException e) {
                 System.out.println("  skipped: " + e.getMessage() + " (--overwrite to re-import)");
             }
+            importer.record(String.valueOf(Path.of(session).getFileName()),
+                    SessionImportService.Kind.DSH_SESSION, "cli-import", savedCount,
+                    savedCount == 0 ? 1 : 0, null);
         }
 
         java.util.function.Consumer<AgentRun> otel = otelSink(opts);
@@ -225,14 +230,19 @@ public final class AgentLensApp {
 
         try (var sqlite = new com.agentlens.eval.SqliteRunStore(Path.of(opts.getOrDefault("db", DEFAULT_DB)))) {
             var importer = new SessionImportService(sqlite);
+            int savedCount = 0;
             try {
                 var saved = importer.importAiopslabRun(imported,
                         new SessionImportService.Options("cli-import", null, opts.containsKey("overwrite")));
+                savedCount = 1;
                 System.out.printf("  saved: %s (agent=%s, source=cli-import)%n",
                         saved.run().runId(), saved.agentName());
             } catch (SessionImportService.RunExistsException e) {
                 System.out.println("  skipped: " + e.getMessage() + " (--overwrite to re-import)");
             }
+            importer.record(String.valueOf(Path.of(session).getFileName()),
+                    SessionImportService.Kind.AIOPSLAB, "cli-import", savedCount,
+                    savedCount == 0 ? 1 : 0, null);
             log.event("info", "run.completed", "runId", run.runId(), "taskId", run.taskId(),
                     "status", run.status(), "durationMs", run.durationMs(), "source", "aiopslab");
         }
@@ -421,7 +431,7 @@ public final class AgentLensApp {
                             + " [--baseline-override k=v,..] [--candidate-override k=v,..]"
                             + " [--approved baseline/approved-baseline.json] [--out PATH]"
                             + " | approve --compare PATH --out PATH | show --run ID"
-                            + " | report [--db PATH] [--out PATH] | serve [--port N] | otel-receive [--port N]"
+                            + " | report [--db PATH] [--out PATH] | serve [--port N] [--artifacts FILE,FILE] | otel-receive [--port N]"
                             + " [--db PATH] | import --session PATH"
                             + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
                             + " [--out PATH] | demo");
@@ -469,6 +479,15 @@ public final class AgentLensApp {
                 int port = requireInt(opts, "port", 8080);
                 if (port < 1 || port > 65535)
                     throw new ConfigException("port must be within 1-65535, got: " + port);
+                String artifacts = opts.get("artifacts");
+                if (artifacts != null && !artifacts.isBlank()) {
+                    for (String part : artifacts.split(",")) {
+                        String trimmed = part.strip();
+                        if (!trimmed.isEmpty() && !java.nio.file.Files.isRegularFile(Path.of(trimmed)))
+                            throw new ConfigException("artifact not found: "
+                                    + Path.of(trimmed).toAbsolutePath());
+                    }
+                }
             }
             case "otel-receive" -> {
                 int port = requireInt(opts, "port", 4318);
@@ -613,6 +632,11 @@ public final class AgentLensApp {
     private static void serve(Map<String, String> opts) throws Exception {
         Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
         int port = requireInt(opts, "port", 8080);
+        String artifacts = opts.get("artifacts");
+        List<Path> artifactPaths = artifacts == null || artifacts.isBlank()
+                ? DashboardServer.defaultArtifacts()
+                : java.util.Arrays.stream(artifacts.split(",")).map(String::strip)
+                        .filter(s -> !s.isEmpty()).map(Path::of).toList();
         var sqlite = new com.agentlens.eval.SqliteRunStore(db);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
@@ -621,9 +645,9 @@ public final class AgentLensApp {
                 System.err.println("warning: failed to close sqlite store: " + e);
             }
         }));
-        var dashboard = new DashboardServer(sqlite, port);
-        System.out.printf("dashboard: %s  (db=%s) - Ctrl+C to stop%n",
-                dashboard.baseUrl() + "/", db.toAbsolutePath());
+        var dashboard = new DashboardServer(sqlite, port, artifactPaths);
+        System.out.printf("dashboard: %s  (db=%s, artifacts=%d) - Ctrl+C to stop%n",
+                dashboard.baseUrl() + "/", db.toAbsolutePath(), artifactPaths.size());
         log.event("info", "dashboard.start", "url", dashboard.baseUrl() + "/",
                 "db", db.toAbsolutePath().toString());
         new java.util.concurrent.CountDownLatch(1).await();

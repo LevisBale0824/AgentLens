@@ -37,6 +37,8 @@ class ConfigValidationTest {
         assertDoesNotThrow(() -> AgentLensApp.validate("run",
                 Map.of("scenarios", s, "repeats", "3", "adapter", "mock")));
         assertDoesNotThrow(() -> AgentLensApp.validate("serve", Map.of("port", "18080")));
+        assertDoesNotThrow(() -> AgentLensApp.validate("serve",
+                Map.of("port", "18080", "artifacts", scenarioFile().toString())));
         assertDoesNotThrow(() -> AgentLensApp.validate("demo", Map.of()));
     }
 
@@ -146,5 +148,13 @@ class ConfigValidationTest {
         ConfigException e = assertThrows(ConfigException.class,
                 () -> AgentLensApp.validate("judge-calibrate", Map.of("samples", "x")));
         assertTrue(e.getMessage().contains("samples must be an integer"));
+    }
+
+    @Test
+    void serveArtifactsMustExist() {
+        ConfigException e = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("serve",
+                        Map.of("port", "18080", "artifacts", "missing.json,bad.json")));
+        assertTrue(e.getMessage().contains("artifact not found"), e.getMessage());
     }
 }

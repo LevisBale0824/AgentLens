@@ -5,6 +5,7 @@ import com.agentlens.core.Diagnosis;
 import com.agentlens.core.EvaluationResult;
 import com.agentlens.eval.DiagnosisEngine;
 import com.agentlens.eval.SqliteRunStore;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 
@@ -12,6 +13,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +45,12 @@ import java.util.Optional;
  *                           trace is evaluated and persisted with
  *                           source=ui-import, so it shows up in the board
  *                           immediately.
+ * GET /api/imports       -> M2: the import history log (file, kind, source,
+ *                           outcome per row)
+ * GET /api/artifacts     -> M2: calibration / compare / approved-baseline
+ *                           artifacts found in output/ and baseline/ (or the
+ *                           serve --artifacts list), with a sniffed kind
+ * GET /api/artifacts/{id}-> M2: one artifact's parsed JSON content
  * </pre>
  *
  * The dashboard is read-only except POST /api/import - the single, tagged
@@ -52,13 +61,19 @@ public final class DashboardServer implements AutoCloseable {
 
     private final SqliteRunStore store;
     private final SessionImportService importService;
+    private final List<Path> artifactFiles;
     private final HttpServer server;
     private final ObjectMapper json = new ObjectMapper();
     private final DiagnosisEngine diagnosisEngine = new DiagnosisEngine();
 
     public DashboardServer(SqliteRunStore store, int port) throws IOException {
+        this(store, port, defaultArtifacts());
+    }
+
+    public DashboardServer(SqliteRunStore store, int port, List<Path> artifacts) throws IOException {
         this.store = store;
         this.importService = new SessionImportService(store);
+        this.artifactFiles = artifacts == null ? List.of() : List.copyOf(artifacts);
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", exchange -> respond(exchange, 200, "text/html; charset=utf-8", INDEX_HTML));
         server.createContext("/api/summary", exchange ->
@@ -99,7 +114,103 @@ public final class DashboardServer implements AutoCloseable {
             var outcome = importService.importFile(query.getOrDefault("name", "upload"), body, options);
             respondJson(exchange, outcome.error() == null ? 200 : 400, importOutcomeMap(outcome));
         });
+        server.createContext("/api/imports", exchange ->
+                respondJson(exchange, 200, Map.of("imports", store.importHistory(50))));
+        server.createContext("/api/artifacts", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.equals("/api/artifacts")) {
+                respondJson(exchange, 200, artifactList());
+            } else if (path.startsWith("/api/artifacts/")) {
+                int id;
+                try {
+                    id = Integer.parseInt(path.substring("/api/artifacts/".length()));
+                } catch (NumberFormatException e) {
+                    respondJson(exchange, 404, Map.of("error", "no such artifact"));
+                    return;
+                }
+                if (id < 0 || id >= artifactFiles.size()) {
+                    respondJson(exchange, 404, Map.of("error", "no such artifact"));
+                    return;
+                }
+                respondJson(exchange, 200, artifactContent(id));
+            } else {
+                respondJson(exchange, 404, Map.of("error", "not found"));
+            }
+        });
         server.start();
+    }
+
+    /** M2: known artifact locations scanned from the working directory. */
+    static List<Path> defaultArtifacts() {
+        List<Path> out = new ArrayList<>();
+        for (String dir : new String[] {"output", "baseline"}) {
+            try (var stream = Files.list(Path.of(dir))) {
+                stream.filter(p -> String.valueOf(p.getFileName()).endsWith(".json")).sorted()
+                        .forEach(out::add);
+            } catch (IOException ignored) {
+                // directory absent - nothing to scan there
+            }
+        }
+        return out.size() > 20 ? out.subList(0, 20) : out;
+    }
+
+    private List<Map<String, Object>> artifactList() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (int i = 0; i < artifactFiles.size(); i++) {
+            Path file = artifactFiles.get(i);
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("id", i);
+            meta.put("name", String.valueOf(file.getFileName()));
+            meta.put("dir", file.getParent() == null ? "." : String.valueOf(file.getParent()));
+            meta.put("kind", artifactKind(file));
+            try {
+                meta.put("size", Files.size(file));
+            } catch (IOException e) {
+                meta.put("size", -1);
+            }
+            out.add(meta);
+        }
+        return out;
+    }
+
+    /** Sniffs which known artifact family a JSON file belongs to. */
+    private String artifactKind(Path file) {
+        try {
+            JsonNode node = json.readTree(file.toFile());
+            if (node == null || !node.isObject()) {
+                return "generic";
+            }
+            if (node.has("casePassRates") && node.has("approvedBy")) {
+                return "approved-baseline";
+            }
+            if (node.has("baseline") && node.has("candidate") && node.has("gate")) {
+                return "compare";
+            }
+            if (node.has("samples") && node.get("samples").isArray()
+                    && node.get("samples").size() > 0
+                    && node.get("samples").get(0).has("expectedPass")) {
+                return "calibration";
+            }
+            return "generic";
+        } catch (Exception e) {
+            return "generic";
+        }
+    }
+
+    private Map<String, Object> artifactContent(int id) throws IOException {
+        Path file = artifactFiles.get(id);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", id);
+        out.put("name", String.valueOf(file.getFileName()));
+        String kind = artifactKind(file);
+        out.put("kind", kind);
+        try {
+            out.put("content", json.readTree(file.toFile()));
+        } catch (Exception e) {
+            out.put("kind", "generic");
+            out.put("content", Files.readString(file));
+        }
+        return out;
     }
 
     /** Base URL the server actually bound to (useful with port 0 in tests). */
@@ -465,6 +576,32 @@ public final class DashboardServer implements AutoCloseable {
               .imp{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
                    border-radius:8px;padding:8px 14px;margin:6px 0;font:12px ui-monospace,Consolas,monospace}
               .imp.bad{border-left-color:var(--bad)}
+              .wf .lane{display:grid;grid-template-columns:180px 1fr;gap:10px;align-items:center;padding:2px 0}
+              .wf .lbl{font:11px ui-monospace,Consolas,monospace;color:var(--dim);text-align:right;
+                    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+              .wf .lbl b{color:var(--text)}
+              .wf .track{position:relative;height:16px;background:#0b101b;border-radius:4px;overflow:hidden}
+              .wfbar{position:absolute;top:3px;height:10px;border-radius:3px;min-width:3px}
+              .ev-MODEL_CALL{background:var(--accent)} .ev-TOOL_CALL{background:#2dd4bf}
+              .ev-TOOL_RESULT{background:#33506b} .ev-FINAL_ANSWER{background:var(--ok)}
+              .ev-ERROR{background:var(--bad)} .ev-PLAN{background:#a78bfa}
+              .ev-RETRIEVAL{background:var(--warn)} .ev-MEMORY_READ,.ev-MEMORY_WRITE{background:#64748b}
+              .axis{display:grid;grid-template-columns:180px 1fr;gap:10px}
+              .axis .ticks{position:relative;height:14px;font:10px ui-monospace,Consolas,monospace;color:var(--dim)}
+              .axis .ticks span{position:absolute;transform:translateX(-50%)}
+              .legend-ev{display:flex;gap:12px;margin-top:8px;font:11px ui-monospace,Consolas,monospace;
+                    color:var(--dim);flex-wrap:wrap}
+              .legend-ev i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
+              .tgl{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;
+                    margin-left:10px;vertical-align:middle}
+              .tgl button{background:none;border:none;color:var(--dim);font:11px ui-monospace,Consolas,monospace;
+                    padding:3px 10px;cursor:pointer}
+              .tgl button.on{background:#12233f;color:var(--accent)}
+              .raw{background:#0b101b;border:1px solid var(--line);border-radius:8px;padding:10px;
+                    font:11.5px ui-monospace,Consolas,monospace;overflow:auto;max-height:420px;
+                    white-space:pre-wrap;word-break:break-all}
+              details.rawwrap{margin-top:12px}
+              details.rawwrap summary{cursor:pointer}
               </style></head><body>
             <header><h1>AgentLens Dashboard <span id="sub">loading…</span></h1></header>
             <main>
@@ -487,6 +624,15 @@ public final class DashboardServer implements AutoCloseable {
               <div id="drop">⇩ drag in session.jsonl(.zstd) / OTLP NDJSON / AIOpsLab JSON - or click to choose · ≤64MB each</div>
               <input type="file" id="fileInput" multiple style="display:none">
               <div id="importOut"></div>
+              <table style="margin-top:14px"><thead><tr><th>time</th><th>file</th><th>kind</th><th>source</th>
+                <th>imported</th><th>skipped</th><th>error</th></tr></thead>
+                <tbody id="importLog"></tbody></table>
+              <h2>Artifacts <span class="pill src">M2</span></h2>
+              <div style="margin-bottom:8px">
+                <select id="artifactSel"><option value="">choose artifact…</option></select>
+                <span id="artifactMeta" class="muted"></span>
+              </div>
+              <div id="artifactView"></div>
               <h2>Runs</h2>
               <div style="margin-bottom:8px">
                 <input id="q" placeholder="filter by task…">
@@ -591,15 +737,16 @@ public final class DashboardServer implements AutoCloseable {
               const el = $("detail");
               el.style.display = "block";
               const r = d.run;
+              window.__events = d.events ?? [];
               let html = `<h2 style="margin-top:4px"><code>${esc(r.taskId)}</code>
                           ${r.status === "SUCCESS" ? pill(r.status, "ok") : pill(r.status, "bad")}
                           ${srcPill(d)}
                           <span class="muted">· ${r.durationMs}ms · ${r.events} events</span></h2>`;
               if (d.finalAnswer) html += `<div class="ev"><b>final answer:</b> ${esc(d.finalAnswer)}</div>`;
               if (d.error) html += `<div class="ev"><b style="color:var(--bad)">error:</b> ${esc(d.error)}</div>`;
-              html += `<h2>Trace timeline</h2>` + d.events.map(e =>
-                `<div class="ev"><span class="t">#${e.index}</span> <b>${esc(e.type)}</b> ${esc(e.name ?? "")}
-                 ${e.durationMs ? e.durationMs + "ms" : ""} ${esc(JSON.stringify(e.attributes))}</div>`).join("");
+              html += `<h2 style="margin-top:10px">Trace timeline
+                <span class="tgl"><button id="tglWf" class="on" onclick="setTl(true)">waterfall</button>
+                <button id="tglLs" onclick="setTl(false)">list</button></span></h2><div id="tl"></div>`;
               if (d.evaluation) {
                 html += `<h2>Evaluation (${esc(d.evaluation.agentVersion ?? "")})</h2>` +
                   d.evaluation.results.map(x =>
@@ -613,8 +760,59 @@ public final class DashboardServer implements AutoCloseable {
                      <span class="muted">severity=${x.severity} confidence=${x.confidence}</span>
                      ${x.evidence.length ? `<div class="ev muted">evidence: ${x.evidence.map(esc).join(", ")}</div>` : ""}
                      ${x.recommendation ? `<div class="ev"><b>fix:</b> ${esc(x.recommendation)}</div>` : ""}</div>`).join(""));
+              html += `<details class="rawwrap"><summary class="muted">raw run JSON</summary>
+                       <pre class="raw">${esc(JSON.stringify(d, null, 2))}</pre></details>`;
               el.innerHTML = html;
+              renderTl();
               el.scrollIntoView({behavior: "smooth"});
+            }
+
+            let tlWaterfall = true;
+            function setTl(waterfall) {
+              tlWaterfall = waterfall;
+              $("tglWf").classList.toggle("on", waterfall);
+              $("tglLs").classList.toggle("on", !waterfall);
+              renderTl();
+            }
+            function renderTl() {
+              const events = window.__events ?? [];
+              const wf = renderWaterfall(events);
+              $("tl").innerHTML = (tlWaterfall && wf) ? wf : events.map(e =>
+                `<div class="ev"><span class="t">#${e.index}</span> <b>${esc(e.type)}</b> ${esc(e.name ?? "")}
+                 ${e.durationMs ? e.durationMs + "ms" : ""} ${esc(JSON.stringify(e.attributes))}</div>`).join("");
+            }
+
+            /* Jaeger-style time-proportional bars; falls back to a sequential
+               layout when all event timestamps coincide (e.g. mock runs). */
+            function renderWaterfall(events) {
+              if (!events.length) return "";
+              const times = events.map(e => Date.parse(e.timestamp));
+              const realTime = times.every(t => !isNaN(t)) &&
+                  Math.max(...times) > Math.min(...times);
+              const durs = events.map(e => Math.max(e.durationMs ?? 0, 0));
+              const t0 = Math.min(...times);
+              const total = realTime
+                  ? Math.max(...times) + Math.max(...durs) - t0
+                  : durs.reduce((a, b) => a + b, 0);
+              if (total <= 0) return "";
+              let cursor = 0;
+              const fmt = ms => ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : ms + "ms";
+              const bars = events.map((e, i) => {
+                const left = realTime ? (times[i] - t0) / total * 100 : cursor / total * 100;
+                const w = Math.max((e.durationMs ?? 0) / total * 100, 0.6);
+                cursor += durs[i];
+                return `<div class="lane"><div class="lbl"><b>${esc(e.type)}</b> ${esc(e.name ?? "")}</div>
+                  <div class="track"><div class="wfbar ev-${esc(e.type)}"
+                    title="${esc(e.type)} ${esc(e.name ?? "")} · ${e.durationMs ?? 0}ms"
+                    style="left:${left}%;width:${w}%"></div></div></div>`;
+              }).join("");
+              const legend = [...new Set(events.map(e => e.type))].map(t =>
+                `<span><i class="ev-${esc(t)}"></i>${esc(t)}</span>`).join("");
+              return `<div class="wf">${bars}</div>
+                <div class="axis"><div></div><div class="ticks">
+                  <span style="left:0">0</span><span style="left:50%">${fmt(total / 2)}</span>
+                  <span style="left:100%">${fmt(total)}</span></div></div>
+                <div class="legend-ev">${legend}</div>`;
             }
 
             const drop = $("drop");
@@ -657,6 +855,94 @@ public final class DashboardServer implements AutoCloseable {
               $("importOut").innerHTML = rows.join("") + $("importOut").innerHTML;
             }
 
+            const stat = (b, t) => `<div class="card" style="min-width:96px"><b>${b}</b><span>${t}</span></div>`;
+            const pct = v => v == null ? '<span class="muted">-</span>' : (v * 100).toFixed(0) + "%";
+
+            async function loadArtifacts() {
+              const list = await j("/api/artifacts");
+              const sel = $("artifactSel");
+              sel.innerHTML = '<option value="">choose artifact…</option>' +
+                list.map(a => `<option value="${a.id}">${esc(a.name)} · ${esc(a.kind)}</option>`).join("");
+              sel.onchange = () => renderArtifact(sel.value);
+            }
+
+            async function renderArtifact(id) {
+              $("artifactMeta").textContent = "";
+              if (id === "") { $("artifactView").innerHTML = ""; return; }
+              const a = await j("/api/artifacts/" + id);
+              $("artifactMeta").textContent = `${a.name} · ${a.kind}`;
+              const c = a.content;
+              if (a.kind === "approved-baseline") $("artifactView").innerHTML = renderBaseline(c);
+              else if (a.kind === "compare") $("artifactView").innerHTML = renderCompare(c);
+              else if (a.kind === "calibration") $("artifactView").innerHTML = renderCalibration(c);
+              else $("artifactView").innerHTML = `<pre class="raw">${esc(JSON.stringify(c, null, 2))}</pre>`;
+            }
+
+            function renderBaseline(b) {
+              const rows = Object.entries(b.casePassRates ?? {}).map(([k, v]) =>
+                `<tr><td><code>${esc(k)}</code></td><td>${pct(v)}</td></tr>`).join("");
+              return `<div class="cards">${stat(pct(b.passPowK), "pass^k")}
+                  ${stat(pct(b.avgPassRate), "avg pass rate")}
+                  ${stat("x" + (b.repeats ?? "?"), "repeats")}
+                  ${stat(esc(b.approvedBy ?? "-"), "approved by")}</div>
+                <div class="muted" style="margin:6px 0">dataset sha256 <code>${esc(b.datasetSha256 ?? "-")}</code>
+                 · evaluators: ${esc((b.evaluatorNames ?? []).join(", "))} · approved at ${esc(b.createdAt ?? "-")}
+                 · format v${esc(b.formatVersion ?? "?")}</div>
+                <table><thead><tr><th>case</th><th>pass rate</th></tr></thead><tbody>${rows}</tbody></table>`;
+            }
+
+            function renderCompare(c) {
+              const base = c.baseline?.cases ?? {}, cand = c.candidate?.cases ?? {};
+              const cases = [...new Set([...Object.keys(base), ...Object.keys(cand)])].sort();
+              const rows = cases.map(k => {
+                const bv = base[k], cv = cand[k];
+                const d = (cv ?? 0) - (bv ?? 0);
+                const cls = d < 0 ? ' class="flip-bad"' : d > 0 ? ' class="flip-good"' : "";
+                return `<tr${cls}><td><code>${esc(k)}</code></td><td>${pct(bv)}</td><td>${pct(cv)}</td>
+                  <td>${d === 0 ? "—" : (d > 0 ? "+" : "") + (d * 100).toFixed(0) + "%"}</td></tr>`;
+              }).join("");
+              const g = c.gate ?? {};
+              return `<div class="cards">${stat(esc(c.baseline?.label ?? "-"), "baseline")}
+                  ${stat(esc(c.candidate?.label ?? "-"), "candidate")}
+                  ${stat(pct(c.baseline?.passPowK), "baseline pass^k")}
+                  ${stat(pct(c.candidate?.passPowK), "candidate pass^k")}</div>
+                <div style="margin:6px 0">gate: ${g.passed ? pill("PASSED", "ok") : pill("FAILED", "bad")}
+                  <span class="muted">${esc(g.reason ?? "")} · adapter=${esc(c.adapter ?? "-")}
+                  · repeats=${esc(c.repeats ?? "-")} · ${esc((c.evaluators ?? []).join(", "))}</span></div>
+                <table><thead><tr><th>case</th><th>baseline</th><th>candidate</th><th>Δ</th></tr></thead>
+                  <tbody>${rows}</tbody></table>`;
+            }
+
+            function renderCalibration(c) {
+              const samples = c.samples ?? [];
+              const agree = samples.filter(s => !!s.judgedPass === !!s.expectedPass).length;
+              const byBehavior = {};
+              samples.forEach(s => {
+                const key = s.behavior ?? "?";
+                const b = byBehavior[key] ??= {n: 0, score: 0, agree: 0};
+                b.n++; b.score += s.score ?? 0;
+                if (!!s.judgedPass === !!s.expectedPass) b.agree++;
+              });
+              const rows = Object.entries(byBehavior).sort((x, y) => x[0].localeCompare(y[0])).map(([k, b]) =>
+                `<tr><td><code>${esc(k)}</code></td><td>${b.n}</td>
+                 <td>${(b.score / b.n).toFixed(3)}</td><td>${b.agree}/${b.n}</td></tr>`).join("");
+              const sampleRows = samples.map(s =>
+                `<tr><td><code>${esc(s.behavior ?? "?")}</code></td>
+                 <td>${s.expectedPass ? pill("want PASS", "ok") : pill("want FAIL", "bad")}
+                     ${s.judgedPass ? pill("judge PASS", "ok") : pill("judge FAIL", "bad")}</td>
+                 <td>${(s.score ?? 0).toFixed(3)}</td>
+                 <td class="muted" style="max-width:460px;overflow:hidden;text-overflow:ellipsis;
+                     white-space:nowrap" title="${esc(s.reason ?? "")}">${esc((s.reason ?? "").slice(0, 140))}</td></tr>`).join("");
+              return `<div class="cards">${stat(samples.length, "samples")}
+                  ${stat(samples.length ? (agree / samples.length * 100).toFixed(0) + "%" : "-", "judge agreement")}
+                  ${stat("v" + (c.corpusVersion ?? "?"), "corpus version")}</div>
+                <table><thead><tr><th>behavior</th><th>n</th><th>avg score</th><th>agreement</th></tr></thead>
+                  <tbody>${rows}</tbody></table>
+                <h2 style="margin-top:14px">samples</h2>
+                <table><thead><tr><th>behavior</th><th>expected / judged</th><th>score</th><th>reason</th></tr></thead>
+                  <tbody>${sampleRows}</tbody></table>`;
+            }
+
             async function boot() {
               renderCards(await j("/api/summary"));
               renderScenarios(await j("/api/scenarios"));
@@ -666,6 +952,15 @@ public final class DashboardServer implements AutoCloseable {
                 const o = document.createElement("option"); o.textContent = v; $("version").appendChild(o);
               });
               renderTrend(RUNS); renderRuns(); loadDiff();
+              j("/api/imports").then(d => {
+                $("importLog").innerHTML = (d.imports ?? []).map(r =>
+                  `<tr><td class="muted">${esc(String(r.importedAt).replace("T", " ").slice(0, 19))}</td>
+                   <td><code>${esc(r.file)}</code></td><td>${pill(r.kind, "src")}</td>
+                   <td class="muted">${esc(r.source)}</td><td>${r.imported}</td><td>${r.skipped}</td>
+                   <td class="muted">${esc(r.error ?? "")}</td></tr>`).join("")
+                  || '<tr><td colspan="7" class="muted">no imports yet</td></tr>';
+              }).catch(() => {});
+              loadArtifacts().catch(() => {});
             }
 
             function wireOnce() {
