@@ -713,6 +713,31 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   scores --reduce --at-least 1(at-least-1=0.900 vs pass^k=0.350,同一数据
   两种口径零重跑)。
 
+### 7.17 语料扩充:Cloud-OpsBench 导入(P1-C 已落地)
+
+接入 LLM4Ops/Cloud-OpsBench(MIT,FSE 2026"冻结案发现场"快照范式):
+**754 个真实 K8s 根因分析案例**(Online Boutique 550 + Train Ticket 204,
+57 类故障,难度 easy 391 / medium 189 / hard 174)。每个案例是集群故障时刻的
+确定性快照(metadata + tool_cache + raw_data),**重放不需要活集群、结果可复现**,
+把评测语料从手写 mock 场景一步扩到真实运维故障规模:
+
+- **CLI `opsbench-import`**:`opsbench-import --root <Cloud-OpsBench 检出目录>
+  --out data/scenarios/opsbench.json [--limit N]`——遍历 `benchmark/<应用>/
+  <故障分类>/<案例>/`,坏案例跳过并给出原因(不阻塞整体),0 导入即报错。
+- **映射(与 Scenario 方言几乎 1:1)**:metadata.query → instruction;
+  result.root_cause(+ fault_object)→ root_cause 金标准答案;
+  tool_cache.json 的确定性诊断工具调用 → allowed_tools(每案例 ≤10 个);
+  难度 → max_steps(easy 8 / medium 12 / hard 15);id 规则
+  `opsbench-<应用>-<分类>-<案例号>`。
+- **落盘即验证**:写出 snake_case Scenario 数组后立刻用 ScenarioLoader
+  读回并打印可加载数——`run --scenarios` 直接消费,不需要人工核对格式。
+- **测试**:+3 导入器测试(真实结构映射 + ScenarioLoader 往返;难度→步数、
+  坏案例跳过与汇总、--limit 截断、缺 benchmark/ 拒绝);+1 配置校验
+  (--root/--out/limit);Checkstyle/SpotBugs 零告警(空值防御重构后零豁免)。
+  真机冒烟:全量 754 导入 0 跳过、计数与上游一致(550+204 / 391+189+174)、
+  ScenarioLoader 全部可加载;5 案例切片 `run --scenarios` 端到端
+  (runs=5 failures=0,pass^k=1.0,门禁 exit 0)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

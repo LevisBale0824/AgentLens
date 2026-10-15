@@ -90,6 +90,9 @@ AgentLensApp compare --baseline correct --candidate flaky [--repeats K] [--revie
 AgentLensApp scores --out PATH [--db PATH] [--version V]   # 从库捕获原始分数
 AgentLensApp scores --reduce PATH [--at-least M]           # 从工件重算指标
 
+# 语料扩充（P1-C）：Cloud-OpsBench 754 个真实 K8s 根因分析案例导入（快照重放、免活集群）
+AgentLensApp opsbench-import --root <Cloud-OpsBench检出目录> --out data/scenarios/opsbench.json [--limit N]
+
 # 冒烟测试
 AgentLensApp demo
 

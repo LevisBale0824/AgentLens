@@ -37,6 +37,8 @@ import java.util.Set;
  *           [--scores-out PATH] (P1-B: persist the candidate's raw k-times scores)
  *   scores --out PATH [--db PATH] [--version V]     (P1-B: capture raw scores artifact)
  *   scores --reduce PATH [--at-least M]             (P1-B: recompute pass@k/pass^k/at-least-m)
+ *   opsbench-import --root PATH --out PATH [--limit N]  (P1-C: Cloud-OpsBench 754
+ *                              real K8s RCA cases -> ScenarioLoader-readable file)
  *   demo
  */
 public final class AgentLensApp {
@@ -423,6 +425,7 @@ public final class AgentLensApp {
                 case "run" -> run(opts);
                 case "compare" -> compare(opts);
                 case "scores" -> scores(opts);
+                case "opsbench-import" -> opsbenchImport(opts);
                 case "approve" -> approve(opts);
                 case "import" -> importSession(opts);
                 case "show" -> show(opts);
@@ -440,6 +443,7 @@ public final class AgentLensApp {
                             + " [--review [--judge]] [--scores-out PATH]"
                             + " | scores --out PATH [--db PATH] [--version V]"
                             + " | scores --reduce PATH [--at-least M]"
+                            + " | opsbench-import --root PATH --out PATH [--limit N]"
                             + " | approve --compare PATH --out PATH | show --run ID"
                             + " | report [--db PATH] [--out PATH] | serve [--port N] [--artifacts FILE,FILE]"
                             + " [--scenarios-out PATH] | otel-receive [--port N]"
@@ -530,6 +534,18 @@ public final class AgentLensApp {
                             + Path.of(opts.get("reduce")).toAbsolutePath());
                 if (requireInt(opts, "at-least", 1) < 1)
                     throw new ConfigException("at-least must be >= 1");
+            }
+            case "opsbench-import" -> {
+                Path root = Path.of(opts.getOrDefault("root", ""));
+                if (opts.get("root") == null || opts.get("root").isBlank()
+                        || !java.nio.file.Files.isDirectory(root))
+                    throw new ConfigException("opsbench-import requires --root PATH "
+                            + "(a Cloud-OpsBench checkout containing benchmark/)");
+                if (opts.get("out") == null || opts.get("out").isBlank())
+                    throw new ConfigException("opsbench-import requires --out PATH "
+                            + "(the scenarios JSON file to write)");
+                if (requireInt(opts, "limit", 0) < 0)
+                    throw new ConfigException("limit must be >= 0 (0 = all cases)");
             }
             case "judge-calibrate" -> {
                 int samples = requireInt(opts, "samples", 2);
@@ -1074,6 +1090,39 @@ public final class AgentLensApp {
      * recompute metrics from one (--reduce) - changing the pass@k / pass^k /
      * at-least-m question never requires re-running the agent.
      */
+    /**
+     * P1-C: imports LLM4Ops/Cloud-OpsBench (754 real K8s RCA cases, MIT) into
+     * a ScenarioLoader-readable scenarios file - snapshots replay, no cluster.
+     */
+    private static void opsbenchImport(Map<String, String> opts) throws Exception {
+        Path root = Path.of(opts.get("root"));
+        Path out = Path.of(opts.get("out"));
+        int limit = requireInt(opts, "limit", 0);
+        var importer = new CloudOpsBenchImporter();
+        List<Scenario> scenarios = new ArrayList<>();
+        CloudOpsBenchImporter.ImportSummary summary = importer.importRoot(root, limit, scenarios);
+        if (summary.imported() == 0) {
+            throw new ConfigException("no cases imported from " + root.toAbsolutePath()
+                    + (summary.skipReasons().isEmpty() ? "" : " - first reason: "
+                    + summary.skipReasons().get(0)));
+        }
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+                .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE);
+        Path parent = out.getParent();
+        if (parent != null) java.nio.file.Files.createDirectories(parent);
+        java.nio.file.Files.writeString(out,
+                mapper.writerWithDefaultPrettyPrinter().writeValueAsString(scenarios));
+        System.out.printf("opsbench import: %d cases imported, %d skipped -> %s%n",
+                summary.imported(), summary.skipped(), out.toAbsolutePath());
+        summary.byNamespace().forEach((ns, n) -> System.out.printf("  %-12s %d cases%n", ns, n));
+        summary.byDifficulty().forEach((d, n) -> System.out.printf("  %-12s %d cases%n", d, n));
+        summary.skipReasons().stream().limit(5)
+                .forEach(r -> System.out.println("  skipped: " + r));
+        // round-trip guarantee: the file must load exactly like run --scenarios would
+        List<Scenario> reloaded = new ScenarioLoader().load(out);
+        System.out.printf("validated by ScenarioLoader: %d scenarios loadable%n", reloaded.size());
+    }
+
     private static void scores(Map<String, String> opts) throws Exception {
         if (opts.get("out") != null && !opts.get("out").isBlank()) {
             Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
@@ -1337,8 +1386,8 @@ public final class AgentLensApp {
         Map<String, String> opts = new java.util.HashMap<>();
         // Skip the command word (args[0]) only when it is one, not when it is a flag.
         int start = args.length > 0 && !args[0].startsWith("--")
-                && List.of("run", "demo", "compare", "scores", "show", "report", "serve",
-                        "judge-calibrate", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
+                && List.of("run", "demo", "compare", "scores", "opsbench-import", "show",
+                        "report", "serve", "judge-calibrate", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
         for (int i = start; i < args.length; i++) {
             if (!args[i].startsWith("--")) continue;
             String key = args[i].substring(2);

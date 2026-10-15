@@ -188,4 +188,24 @@ class ConfigValidationTest {
                 () -> AgentLensApp.validate("scores", Map.of("reduce", "missing-scores.json")));
         assertTrue(missing.getMessage().contains("scores artifact not found"), missing.getMessage());
     }
+
+    @Test
+    void opsbenchImportRequiresRootAndOut() throws Exception {
+        Path checkout = tempDir.resolve("opsbench");
+        java.nio.file.Files.createDirectories(checkout.resolve("benchmark"));
+        assertDoesNotThrow(() -> AgentLensApp.validate("opsbench-import",
+                Map.of("root", checkout.toString(), "out", tempDir.resolve("scenarios.json").toString())));
+        ConfigException noOut = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("opsbench-import", Map.of("root", checkout.toString())));
+        assertTrue(noOut.getMessage().contains("--out"), noOut.getMessage());
+        ConfigException badRoot = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("opsbench-import",
+                        Map.of("root", tempDir.resolve("not-a-checkout").toString(),
+                                "out", "scenarios.json")));
+        assertTrue(badRoot.getMessage().contains("--root"), badRoot.getMessage());
+        ConfigException badLimit = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("opsbench-import",
+                        Map.of("root", checkout.toString(), "out", "s.json", "limit", "-1")));
+        assertTrue(badLimit.getMessage().contains("limit"), badLimit.getMessage());
+    }
 }
