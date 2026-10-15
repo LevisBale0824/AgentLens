@@ -75,4 +75,30 @@ class PassKTest {
     void emptyRunsRejected() {
         assertThrows(IllegalArgumentException.class, () -> PassK.aggregate("scn", List.of()));
     }
+
+    @Test
+    void rawReducersMatchAggregateSemantics() {
+        // P1-B: raw boolean reducers must agree with the aggregate() view.
+        var summary = PassK.summarizeRaw(Map.of(
+                "stable", List.of(true, true),
+                "flaky", List.of(true, false, true),
+                "dead", List.of(false, false)));
+        assertEquals(3, summary.scenarios());
+        assertEquals(1.0 / 3, summary.passPowK(), 1e-9);
+        assertEquals((1.0 + 2.0 / 3 + 0.0) / 3, summary.avgPassRate(), 1e-9);
+        assertEquals(List.of("stable"), summary.layered().get(PassK.FailureLayer.STABLE_PASS));
+        assertEquals(List.of("flaky"), summary.layered().get(PassK.FailureLayer.FLAKY));
+        assertEquals(List.of("dead"), summary.layered().get(PassK.FailureLayer.STABLE_FAIL));
+
+        List<Boolean> twoOfThree = List.of(true, false, true);
+        assertEquals(2.0 / 3, PassK.rawPassRate(twoOfThree), 1e-9);
+        assertEquals(true, PassK.rawPassAtK(twoOfThree));
+        assertEquals(false, PassK.rawPassPowK(twoOfThree));
+        assertEquals(true, PassK.rawPassAtLeast(twoOfThree, 2));
+        assertEquals(false, PassK.rawPassAtLeast(twoOfThree, 3));
+        assertEquals(true, PassK.rawPassAtLeast(twoOfThree, 1));
+        // case-a passes at-least-2 exactly, case-b fails it -> share 1/2
+        assertEquals(0.5, PassK.rawAtLeastShare(Map.of("a", twoOfThree, "b", List.of(false, false)), 2), 1e-9);
+        assertThrows(IllegalArgumentException.class, () -> PassK.summarizeRaw(Map.of()));
+    }
 }

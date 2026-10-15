@@ -9,6 +9,7 @@ import com.agentlens.eval.ApprovedGate;
 import com.agentlens.eval.ComplianceEvaluator;
 import com.agentlens.eval.EvaluatorRegistry;
 import com.agentlens.eval.ExperimentRunner;
+import com.agentlens.eval.GateReview;
 import com.agentlens.eval.PassK;
 import com.agentlens.eval.RegressionGate;
 import com.agentlens.eval.RunLimitEvaluator;
@@ -31,6 +32,11 @@ import java.util.Set;
  *           [--baseline-override k=v,...] [--candidate-override k=v,...]
  *                             (per-side task-context overrides; with dsh: dshArgs=... /
  *                              env.KEY=... switch the candidate's model or launcher config)
+ *           [--review]        (P1-B: gate review - pass^k + evidence chain -> LLM
+ *                              review when --judge is on, deterministic fallback otherwise)
+ *           [--scores-out PATH] (P1-B: persist the candidate's raw k-times scores)
+ *   scores --out PATH [--db PATH] [--version V]     (P1-B: capture raw scores artifact)
+ *   scores --reduce PATH [--at-least M]             (P1-B: recompute pass@k/pass^k/at-least-m)
  *   demo
  */
 public final class AgentLensApp {
@@ -416,6 +422,7 @@ public final class AgentLensApp {
             switch (command) {
                 case "run" -> run(opts);
                 case "compare" -> compare(opts);
+                case "scores" -> scores(opts);
                 case "approve" -> approve(opts);
                 case "import" -> importSession(opts);
                 case "show" -> show(opts);
@@ -430,6 +437,9 @@ public final class AgentLensApp {
                     System.err.println("usage: run [...] | compare --baseline B --candidate B"
                             + " [--baseline-override k=v,..] [--candidate-override k=v,..]"
                             + " [--approved baseline/approved-baseline.json] [--out PATH]"
+                            + " [--review [--judge]] [--scores-out PATH]"
+                            + " | scores --out PATH [--db PATH] [--version V]"
+                            + " | scores --reduce PATH [--at-least M]"
                             + " | approve --compare PATH --out PATH | show --run ID"
                             + " | report [--db PATH] [--out PATH] | serve [--port N] [--artifacts FILE,FILE]"
                             + " [--scenarios-out PATH] | otel-receive [--port N]"
@@ -508,6 +518,18 @@ public final class AgentLensApp {
             case "import" -> {
                 validateOtel(opts);
                 validateJudge(opts);
+            }
+            case "scores" -> {
+                boolean hasOut = opts.get("out") != null && !opts.get("out").isBlank();
+                boolean hasReduce = opts.get("reduce") != null && !opts.get("reduce").isBlank();
+                if (hasOut == hasReduce)
+                    throw new ConfigException("scores requires exactly one of "
+                            + "--out PATH (capture raw scores from --db) or --reduce PATH (recompute metrics from an artifact)");
+                if (hasReduce && !java.nio.file.Files.isRegularFile(Path.of(opts.get("reduce"))))
+                    throw new ConfigException("scores artifact not found: "
+                            + Path.of(opts.get("reduce")).toAbsolutePath());
+                if (requireInt(opts, "at-least", 1) < 1)
+                    throw new ConfigException("at-least must be >= 1");
             }
             case "judge-calibrate" -> {
                 int samples = requireInt(opts, "samples", 2);
@@ -756,28 +778,30 @@ public final class AgentLensApp {
                     opts.get("approved"), approved.passPowK(), approved.avgPassRate(), approved.approvedBy());
         }
 
-        PassK.Summary baseSummary, candSummary;
+        VersionOutcome baseOutcome, candOutcome;
         String baseLabel, candLabel;
         if (approved != null) {
-            candSummary = runCompareSide(adapterName, "candidate",
+            candOutcome = runCompareSide(adapterName, "candidate",
                     candidateBehavior, candidateOverrides, scenarios, tasks, repeats, opts);
             candLabel = "dsh".equals(adapterName) ? "dsh-headless" : "mock-" + candidateBehavior;
-            baseSummary = null;
+            baseOutcome = null;
             baseLabel = "approved:" + Path.of(opts.get("approved")).getFileName();
         } else if ("dsh".equals(adapterName)) {
             var dsh = (com.agentlens.adapters.dsh.DshAgentAdapter) AdapterRegistry.load().get("dsh");
-            baseSummary = evaluateDshVersion(dsh, scenarios, repeats, "baseline", baselineOverrides, opts);
-            candSummary = evaluateDshVersion(dsh, scenarios, repeats, "candidate", candidateOverrides, opts);
+            baseOutcome = evaluateDshVersion(dsh, scenarios, repeats, "baseline", baselineOverrides, opts);
+            candOutcome = evaluateDshVersion(dsh, scenarios, repeats, "candidate", candidateOverrides, opts);
             baseLabel = "dsh-headless";
             candLabel = "dsh-headless";
         } else {
-            baseSummary = evaluateVersion(baselineBehavior,
+            baseOutcome = evaluateVersion(baselineBehavior,
                     applyAll(tasks, baselineOverrides), repeats, opts);
-            candSummary = evaluateVersion(candidateBehavior,
+            candOutcome = evaluateVersion(candidateBehavior,
                     applyAll(tasks, candidateOverrides), repeats, opts);
             baseLabel = "mock-" + baselineBehavior;
             candLabel = "mock-" + candidateBehavior;
         }
+        PassK.Summary baseSummary = baseOutcome == null ? null : baseOutcome.summary();
+        PassK.Summary candSummary = candOutcome.summary();
 
         System.out.printf("%n%-10s %-22s pass^k=%.3f  avgPassRate=%.3f%n",
                 "baseline", baseLabel,
@@ -793,17 +817,75 @@ public final class AgentLensApp {
                 : new RegressionGate(List.of("tool-policy"), 0.0).compare(baseSummary, candSummary);
         System.out.printf("%nrelease gate: passed=%s%n  reason=%s%n", gate.passed(), gate.reason());
         logGate("compare", gate);
+
+        // P1-B: persist the candidate's RAW k-times outcomes so the metrics can be
+        // recomputed later (pass@k / pass^k / at-least-m) without another run.
+        if (opts.get("scores-out") != null && !opts.get("scores-out").isBlank()) {
+            if (candOutcome.outcomes() == null) {
+                System.out.println("scores-out: candidate side has no raw outcomes (approved-baseline path) - skipped");
+            } else {
+                new com.agentlens.eval.ScoreRecord(com.agentlens.eval.ScoreRecord.FORMAT_VERSION,
+                        candLabel, repeats, candOutcome.outcomes(), null)
+                        .write(Path.of(opts.get("scores-out")));
+                System.out.printf("raw scores written: %s (cases=%d, repeats=%d)%n",
+                        Path.of(opts.get("scores-out")).toAbsolutePath(),
+                        candOutcome.outcomes().size(), repeats);
+            }
+        }
+
+        // P1-B: pass^k + evidence chain injected into an LLM gate review (fail-open).
+        String review = null;
+        if (opts.containsKey("review")) {
+            review = reviewGate(opts, baseLabel, baseOutcome, candLabel, candOutcome, gate);
+            System.out.printf("%ngate review:%n%s%n", review);
+        }
+
         if (opts.containsKey("out"))
             writeCompareArtifact(Path.of(opts.get("out")), scenariosPath, datasetSha, adapterName,
-                    repeats, evaluatorNames, baseLabel, baseSummary, candLabel, candSummary, gate);
+                    repeats, evaluatorNames, baseLabel, baseSummary, candLabel, candSummary, gate, review);
         gateExit("compare", gate);
     }
 
+    /**
+     * P1-B: asks the configured judge for a narrative gate review built from the
+     * verdict, both sides' metrics and the candidate's failing-run evidence.
+     * Without --judge (or on judge failure) falls back to the deterministic
+     * summary - the review never blocks or crashes the gate.
+     */
+    private static String reviewGate(Map<String, String> opts, String baseLabel, VersionOutcome base,
+                                     String candLabel, VersionOutcome cand,
+                                     RegressionGate.GateResult gate) {
+        Map<String, String> evidence = GateReview.firstFailureReasons(
+                cand == null ? null : cand.rawResults());
+        PassK.Summary baseSummary = base == null ? null : base.summary();
+        PassK.Summary candSummary = cand == null ? null : cand.summary();
+        if (!opts.containsKey("judge")) {
+            return GateReview.fallbackReview(baseLabel, candLabel, baseSummary, candSummary, gate, evidence);
+        }
+        try {
+            return buildJudge(opts).review(
+                    GateReview.buildPrompt(baseLabel, candLabel, baseSummary, candSummary, gate, evidence));
+        } catch (Exception e) {
+            return "LLM review unavailable (" + e.getMessage() + "); deterministic summary follows.\n"
+                    + GateReview.fallbackReview(baseLabel, candLabel, baseSummary, candSummary, gate, evidence);
+        }
+    }
+
+    /** One compare side's aggregates plus the RAW outcomes that produced them (P1-B). */
+    private record VersionOutcome(PassK.Summary summary,
+                                  Map<String, List<Boolean>> outcomes,
+                                  Map<String, List<List<com.agentlens.core.EvaluationResult>>> rawResults) {
+        /** Sides without raw outcomes (frozen baselines). */
+        static VersionOutcome of(PassK.Summary summary) {
+            return new VersionOutcome(summary, null, null);
+        }
+    }
+
     /** Runs one compare side (mock behaviors or real dsh sessions). */
-    private static PassK.Summary runCompareSide(String adapterName, String version, String behavior,
-                                                Map<String, String> overrides, List<Scenario> scenarios,
-                                                List<AgentTask> tasks, int repeats,
-                                                Map<String, String> opts) throws Exception {
+    private static VersionOutcome runCompareSide(String adapterName, String version, String behavior,
+                                                 Map<String, String> overrides, List<Scenario> scenarios,
+                                                 List<AgentTask> tasks, int repeats,
+                                                 Map<String, String> opts) throws Exception {
         if ("dsh".equals(adapterName)) {
             var dsh = (com.agentlens.adapters.dsh.DshAgentAdapter) AdapterRegistry.load().get("dsh");
             return evaluateDshVersion(dsh, scenarios, repeats, version, overrides, opts);
@@ -823,7 +905,8 @@ public final class AgentLensApp {
     /** Machine-readable comparison artifact (the input for `approve`). */
     private record CompareArtifact(String generatedAt, DatasetRef dataset, String adapter,
                                    int repeats, List<String> evaluators,
-                                   SideDoc baseline, SideDoc candidate, GateDoc gate) {
+                                   SideDoc baseline, SideDoc candidate, GateDoc gate,
+                                   String review) {
         record DatasetRef(String path, String sha256) {}
         record SideDoc(String label, Double passPowK, Double avgPassRate, Map<String, Double> cases) {}
         record GateDoc(boolean passed, String reason) {}
@@ -834,12 +917,13 @@ public final class AgentLensApp {
                                              List<String> evaluatorNames,
                                              String baseLabel, PassK.Summary baseSummary,
                                              String candLabel, PassK.Summary candSummary,
-                                             RegressionGate.GateResult gate) throws Exception {
+                                             RegressionGate.GateResult gate,
+                                             String review) throws Exception {
         var artifact = new CompareArtifact(java.time.Instant.now().toString(),
                 new CompareArtifact.DatasetRef(scenariosPath.toString(), datasetSha),
                 adapterName, repeats, evaluatorNames,
                 sideDoc(baseLabel, baseSummary), sideDoc(candLabel, candSummary),
-                new CompareArtifact.GateDoc(gate.passed(), gate.reason()));
+                new CompareArtifact.GateDoc(gate.passed(), gate.reason()), review);
         Path parent = out.getParent();
         if (parent != null) java.nio.file.Files.createDirectories(parent);
         java.nio.file.Files.writeString(out,
@@ -910,10 +994,10 @@ public final class AgentLensApp {
      * actually used, and both the overrides and the observed model land in the
      * evaluation metadata for auditability.
      */
-    private static PassK.Summary evaluateDshVersion(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
-                                                    List<Scenario> scenarios, int repeats, String version,
-                                                    Map<String, String> sideOverrides,
-                                                    Map<String, String> opts) throws Exception {
+    private static VersionOutcome evaluateDshVersion(com.agentlens.adapters.dsh.DshAgentAdapter dsh,
+                                                     List<Scenario> scenarios, int repeats, String version,
+                                                     Map<String, String> sideOverrides,
+                                                     Map<String, String> opts) throws Exception {
         var registry = new EvaluatorRegistry()
                 .register(new TaskCompletionEvaluator())
                 .register(new RunLimitEvaluator())
@@ -950,7 +1034,12 @@ public final class AgentLensApp {
                 }
             }
         }
-        return PassK.summarize(byTask);
+        // P1-B: dsh sessions carry raw outcomes too (repeat loop is in this method).
+        Map<String, List<Boolean>> outcomes = new java.util.LinkedHashMap<>();
+        byTask.forEach((taskId, repeatResults) -> outcomes.put(taskId, repeatResults.stream()
+                .map(r -> !r.isEmpty() && r.stream().allMatch(com.agentlens.core.EvaluationResult::passed))
+                .toList()));
+        return new VersionOutcome(PassK.summarize(byTask), outcomes, byTask);
     }
 
     /** Applies the same context overrides to every task of a side. */
@@ -958,8 +1047,8 @@ public final class AgentLensApp {
         return overrides.isEmpty() ? tasks : tasks.stream().map(t -> withOverrides(t, overrides)).toList();
     }
 
-    private static PassK.Summary evaluateVersion(String behavior, List<AgentTask> tasks, int repeats,
-                                                 Map<String, String> opts)
+    private static VersionOutcome evaluateVersion(String behavior, List<AgentTask> tasks, int repeats,
+                                                  Map<String, String> opts)
             throws Exception {
         var runner = withOtel(withSqlite(new ExperimentRunner(new com.agentlens.adapters.MockAgentAdapter(behavior),
                 new EvaluatorRegistry()
@@ -967,10 +1056,62 @@ public final class AgentLensApp {
                         .register(new RunLimitEvaluator())
                         .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
                         .register(new ComplianceEvaluator()),
-                new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4),
-                DEFAULT_DB), opts);
+                new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4)
+                .withAgentVersion("mock-" + behavior),
+                opts.getOrDefault("db", DEFAULT_DB)), opts);
         var byTask = runner.runRepeated(tasks, repeats);
-        return PassK.summarize(byTask);
+        // P1-B: keep the RAW per-case outcomes (one boolean per repeat) alongside
+        // the aggregate - they are what makes post-hoc metric recomputation free.
+        Map<String, List<Boolean>> outcomes = new java.util.LinkedHashMap<>();
+        byTask.forEach((taskId, repeatResults) -> outcomes.put(taskId, repeatResults.stream()
+                .map(r -> !r.isEmpty() && r.stream().allMatch(com.agentlens.core.EvaluationResult::passed))
+                .toList()));
+        return new VersionOutcome(PassK.summarize(byTask), outcomes, byTask);
+    }
+
+    /**
+     * P1-B 口径对齐: capture the RAW k-times scores as an artifact (--out) or
+     * recompute metrics from one (--reduce) - changing the pass@k / pass^k /
+     * at-least-m question never requires re-running the agent.
+     */
+    private static void scores(Map<String, String> opts) throws Exception {
+        if (opts.get("out") != null && !opts.get("out").isBlank()) {
+            Path db = Path.of(opts.getOrDefault("db", DEFAULT_DB));
+            if (!java.nio.file.Files.isRegularFile(db))
+                throw new ConfigException("database not found (run something first): " + db.toAbsolutePath());
+            String version = opts.get("version");
+            try (var store = new com.agentlens.eval.SqliteRunStore(db)) {
+                var record = com.agentlens.eval.ScoreRecord.fromStore(store,
+                        version == null ? "all" : version, version);
+                if (record.caseOutcomes().isEmpty()) {
+                    System.out.printf("no evaluated runs found in %s%s - nothing to capture%n",
+                            db.toAbsolutePath(),
+                            version == null ? "" : " for version " + version);
+                    return;
+                }
+                record.write(Path.of(opts.get("out")));
+                System.out.printf("raw scores captured: %s (label=%s, cases=%d, repeats=%d)%n",
+                        Path.of(opts.get("out")).toAbsolutePath(), record.label(),
+                        record.caseOutcomes().size(), record.repeats());
+                printPassKSummary(record.summarize());
+            }
+            return;
+        }
+        var record = com.agentlens.eval.ScoreRecord.read(Path.of(opts.get("reduce")));
+        int atLeast = requireInt(opts, "at-least", 1);
+        System.out.printf("score record: label=%s cases=%d repeats=%d created=%s%n",
+                record.label(), record.caseOutcomes().size(), record.repeats(), record.createdAt());
+        record.caseOutcomes().forEach((id, outcomes) -> System.out.printf(
+                "  %-30s k=%d passed=%d rate=%.3f pass@k=%-5s pass^k=%-5s at-least-%d=%s%n",
+                id, outcomes.size(),
+                outcomes.stream().filter(Boolean::booleanValue).count(),
+                PassK.rawPassRate(outcomes),
+                PassK.rawPassAtK(outcomes),
+                PassK.rawPassPowK(outcomes),
+                atLeast, PassK.rawPassAtLeast(outcomes, atLeast)));
+        printPassKSummary(record.summarize());
+        System.out.printf("at-least-%d share: %.3f%n", atLeast,
+                PassK.rawAtLeastShare(record.caseOutcomes(), atLeast));
     }
 
     private static void printLayered(String label, PassK.Summary summary) {
@@ -1196,7 +1337,8 @@ public final class AgentLensApp {
         Map<String, String> opts = new java.util.HashMap<>();
         // Skip the command word (args[0]) only when it is one, not when it is a flag.
         int start = args.length > 0 && !args[0].startsWith("--")
-                && List.of("run", "demo", "compare", "show", "report", "serve", "judge-calibrate", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
+                && List.of("run", "demo", "compare", "scores", "show", "report", "serve",
+                        "judge-calibrate", "import", "aiopslab-catalog").contains(args[0]) ? 1 : 0;
         for (int i = start; i < args.length; i++) {
             if (!args[i].startsWith("--")) continue;
             String key = args[i].substring(2);

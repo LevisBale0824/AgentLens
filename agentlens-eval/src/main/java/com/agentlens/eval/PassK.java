@@ -69,4 +69,61 @@ public final class PassK {
             layered = Map.copyOf(layered);
         }
     }
+
+    // ------------------------------------------------------------- raw reducers
+    // P1-B 口径对齐: the same metrics recomputed from RAW per-case outcomes, so a
+    // stored artifact can answer pass@k / pass^k / at-least-m questions later
+    // without re-running the agent (Inspect-epochs-style reducers).
+
+    /** Share of outcomes that passed (the plain per-run pass rate). */
+    public static double rawPassRate(List<Boolean> outcomes) {
+        return outcomes.isEmpty() ? 0.0
+                : (double) outcomes.stream().filter(Boolean::booleanValue).count() / outcomes.size();
+    }
+
+    /** pass@k: at least one of the k runs passed. */
+    public static boolean rawPassAtK(List<Boolean> outcomes) {
+        return outcomes.stream().anyMatch(Boolean::booleanValue);
+    }
+
+    /** pass^k: every one of the k runs passed. */
+    public static boolean rawPassPowK(List<Boolean> outcomes) {
+        return !outcomes.isEmpty() && outcomes.stream().allMatch(Boolean::booleanValue);
+    }
+
+    /** at-least-m: at least m of the k runs passed (m = k gives pass^k, m = 1 gives pass@k). */
+    public static boolean rawPassAtLeast(List<Boolean> outcomes, int m) {
+        return outcomes.stream().filter(Boolean::booleanValue).count() >= m;
+    }
+
+    /** Full layering + summary recomputed from raw outcomes (equivalent to aggregate()). */
+    public static Summary summarizeRaw(Map<String, List<Boolean>> caseOutcomes) {
+        if (caseOutcomes == null || caseOutcomes.isEmpty()) {
+            throw new IllegalArgumentException("at least one case is required");
+        }
+        List<ScenarioPassK> perScenario = caseOutcomes.entrySet().stream()
+                .map(e -> new ScenarioPassK(e.getKey(), e.getValue().size(),
+                        e.getValue().stream().filter(Boolean::booleanValue).count(),
+                        rawPassRate(e.getValue()),
+                        rawPassPowK(e.getValue()) ? 1.0 : 0.0,
+                        rawPassAtK(e.getValue()) ? 1.0 : 0.0,
+                        layerOf(e.getValue().stream().filter(Boolean::booleanValue).count(),
+                                e.getValue().size())))
+                .toList();
+        int scenarios = perScenario.size();
+        double passPowK = perScenario.stream().filter(s -> s.layer() == FailureLayer.STABLE_PASS).count()
+                / (double) scenarios;
+        double avgPassRate = perScenario.stream().mapToDouble(ScenarioPassK::passRate).average().orElse(0.0);
+        Map<FailureLayer, List<String>> layered = perScenario.stream()
+                .collect(Collectors.groupingBy(ScenarioPassK::layer,
+                        Collectors.mapping(ScenarioPassK::scenarioId, Collectors.toList())));
+        return new Summary(perScenario, scenarios, passPowK, avgPassRate, layered);
+    }
+
+    /** Share of cases passing at-least-m of their k runs. */
+    public static double rawAtLeastShare(Map<String, List<Boolean>> caseOutcomes, int m) {
+        if (caseOutcomes == null || caseOutcomes.isEmpty()) return 0.0;
+        return (double) caseOutcomes.values().stream().filter(o -> rawPassAtLeast(o, m)).count()
+                / caseOutcomes.size();
+    }
 }

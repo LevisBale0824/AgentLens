@@ -168,4 +168,24 @@ class ConfigValidationTest {
                         Map.of("port", "18080", "scenarios-out", tempDir.toString())));
         assertTrue(e.getMessage().contains("must be a .json file"), e.getMessage());
     }
+
+    @Test
+    void scoresRequiresExactlyOneOfOutOrReduce() throws Exception {
+        assertDoesNotThrow(() -> AgentLensApp.validate("scores",
+                Map.of("out", tempDir.resolve("scores.json").toString())));
+        Path reduce = tempDir.resolve("scores.json");
+        java.nio.file.Files.writeString(reduce, "{}");
+        assertDoesNotThrow(() -> AgentLensApp.validate("scores",
+                Map.of("reduce", reduce.toString(), "at-least", "2")));
+        ConfigException both = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("scores", Map.of(
+                        "out", "a.json", "reduce", "b.json")));
+        assertTrue(both.getMessage().contains("exactly one of"), both.getMessage());
+        ConfigException neither = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("scores", Map.of()));
+        assertTrue(neither.getMessage().contains("exactly one of"), neither.getMessage());
+        ConfigException missing = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("scores", Map.of("reduce", "missing-scores.json")));
+        assertTrue(missing.getMessage().contains("scores artifact not found"), missing.getMessage());
+    }
 }

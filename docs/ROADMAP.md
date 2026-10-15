@@ -679,6 +679,40 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   返回 400 提示);+1 配置校验(--scenarios-out 不能是目录);Checkstyle/SpotBugs
   零告警;真机冒烟:标注→详情/队列可见,场景保存→snake_case 文件可加载。
 
+### 7.16 口径对齐(P1-B 已落地)
+
+对齐 Inspect AI 的 epochs + reducers 模式:**原始 k 次分数落盘一次,口径随时重算**——
+改问法(pass@k / pass^k / at-least-m)不再需要重跑 agent、不再烧配额;
+并把 pass^k 门禁结论连同证据链一起交给 LLM 做发布评审:
+
+- **ScoreRecord 工件**(eval):`{formatVersion, label, repeats, caseOutcomes:
+  {caseId: [k 个布尔]}, createdAt}`——每 (case, repeat) 一个原始结果。
+  `ScoreRecord.fromStore(store, label, version)` 从库构建(按 startedAt 排序、
+  可按 agentVersion 过滤),`write/read` 落盘往返,`summarize()` 现场重算聚合。
+- **原始归约器**(PassK):`rawPassRate / rawPassAtK / rawPassPowK /
+  rawPassAtLeast(outcomes, m) / rawAtLeastShare(cases, m) / summarizeRaw(cases)`
+  ——与 aggregate() 语义一致的布尔版(m=1 即 pass@k,m=k 即 pass^k)。
+- **CLI `scores`**:`scores --out PATH [--db PATH] [--version V]` 捕获原始分数;
+  `scores --reduce PATH [--at-least M]` 从事件重算逐 case 与整体指标
+  (两者互斥,启动校验)。`compare --scores-out PATH` 顺带落候选侧原始分数。
+- **注入评审** `compare --review`:GateReview 确定性组装评审载荷(gate 结论、
+  双侧 pass^k/avg、逐 case rate+分层、失败 case 的评测器原因证据链)→
+  `LlmJudge.review()`(新自由文本接口,OpenAiJudge 复用 chat 通道、
+  ollama native 传输保持兼容)→ 评审文本写进 compare 工件 `review` 字段 +
+  看板 compare 渲染;无 --judge 或 judge 失败时 fail-open 到确定性摘要,
+  门禁永不因评审阻塞。
+- **顺带修复**:mock 路径 `evaluateVersion` 此前无视 `--db`(写死 output/runs.db)
+  且 ExperimentRunner 落库 version 写死 "dev"——现在 `--db` 生效、compare 双侧
+  以 `mock-<behavior>` 作为 agentVersion 落库(看板 diff 由此也能区分 mock 侧版本)。
+- **测试**:+1 PassK 原始归约与 aggregate 语义一致性;+2 ScoreRecord
+  (fromStore 捕获/版本过滤/往返/summarize);+3 GateReview(提示词组装/
+  fail-open 摘要/失败原因扁平化);+1 OpenAiJudge.review(桩端点透传纯文本);
+  +1 scores 配置校验;Checkstyle/SpotBugs 零告警(ScoreRecord 登记同族豁免)。
+  真机冒烟:compare --scores-out --review(门禁 exit 100、评审含 flaky 清单
+  与证据链)、scores --version mock-flaky --out(20 case × 2 repeats)、
+  scores --reduce --at-least 1(at-least-1=0.900 vs pass^k=0.350,同一数据
+  两种口径零重跑)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

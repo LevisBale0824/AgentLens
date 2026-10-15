@@ -1147,6 +1147,7 @@ public final class DashboardServer implements AutoCloseable {
                 <div style="margin:6px 0">gate: ${g.passed ? pill("PASSED", "ok") : pill("FAILED", "bad")}
                   <span class="muted">${esc(g.reason ?? "")} · adapter=${esc(c.adapter ?? "-")}
                   · repeats=${esc(c.repeats ?? "-")} · ${esc((c.evaluators ?? []).join(", "))}</span></div>
+                ${c.review ? `<div class="imp"><b>gate review:</b><br>${esc(c.review)}</div>` : ""}
                 <table><thead><tr><th>case</th><th>baseline</th><th>candidate</th><th>Δ</th></tr></thead>
                   <tbody>${rows}</tbody></table>`;
             }

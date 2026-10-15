@@ -277,8 +277,12 @@ P2 LLM Judge / Web UI / 外部集成
     `compare --approved` 冻结基线路径（漂移零成本即拒，dsh 省一半配额）。
 
 - **P0 四项已全部落地**（2026-10-14：语料文件化 `8239ffe` / otel-receive `b7ebf2a` /
-  看板逐用例 diff `04619fc` / 门禁契约本项）；下一步从 P1 清单挑：口径对齐 P1-B
-  （pass^k + 证据链注入评审）或语料扩充 P1-C（Cloud-OpsBench 导入，754 案例 MIT）。
+  看板逐用例 diff `04619fc` / 门禁契约本项）。
+  **P1-B 口径对齐已落地（2026-10-15）**：ScoreRecord 原始 k 次分数工件 +
+  PassK 原始归约器（pass@k/pass^k/at-least-m 事后重算）+ `scores` 捕获/重算子命令 +
+  `compare --review`（pass^k+证据链→LLM 评审，fail-open）+ `compare --scores-out`
+  （ROADMAP 7.16）。剩余：分数三来源模型、p50/p95 成本序列、断言代数、scorer 契约。
+  下一步：语料扩充 P1-C（Cloud-OpsBench 导入，754 案例 MIT）。
 - **P1**：分数三来源模型（judge/人工/外部 API 统一挂 run）+ 人工复核队列；存原始 k 次分数、
   pass@k/pass^k/at_least_k 事后重算（Inspect epochs 模式）；p50/p95/成本时间序列；trace 瀑布图；
   断言代数（`not-` 反转/单条权重/assert-set k-of-n）；scorer 契约 {value, answer, explanation, reason}。

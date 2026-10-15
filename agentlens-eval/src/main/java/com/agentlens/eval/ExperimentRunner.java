@@ -20,6 +20,8 @@ public final class ExperimentRunner {
     private final JsonlRunStore store;
     private final int concurrency;
     private final long timeoutMs;
+    /** Version stamped on persisted evaluations (P1-B: compare sides use their label). */
+    private String agentVersion = "dev";
     private java.util.function.BiConsumer<AgentRun, EvaluationRun> runListener;
 
     public ExperimentRunner(AgentAdapter adapter, EvaluatorRegistry evaluators, JsonlRunStore store, int concurrency) {
@@ -33,6 +35,12 @@ public final class ExperimentRunner {
         this.store = store;
         this.concurrency = Math.max(1, concurrency);
         this.timeoutMs = timeoutMs;
+    }
+
+    /** Stamps persisted evaluations with an agent version (default "dev"). */
+    public ExperimentRunner withAgentVersion(String version) {
+        if (version != null && !version.isBlank()) this.agentVersion = version;
+        return this;
     }
 
     /**
@@ -101,7 +109,7 @@ public final class ExperimentRunner {
             var errors = TraceValidator.validate(run);
             if (!errors.isEmpty()) throw new IllegalStateException(String.join(", ", errors));
             store.append(run);
-            EvaluationRun evaluation = new EvaluationRun(run.runId(), task.id(), adapter.name(), "dev",
+            EvaluationRun evaluation = new EvaluationRun(run.runId(), task.id(), adapter.name(), agentVersion,
                     run.startedAt(), evaluators.evaluate(task, run),
                     Map.of("durationMs", run.durationMs(), "totalTokens", run.totalTokens()));
             if (runListener != null) runListener.accept(run, evaluation);

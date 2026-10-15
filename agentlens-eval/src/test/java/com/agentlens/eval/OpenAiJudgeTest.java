@@ -95,6 +95,22 @@ class OpenAiJudgeTest {
     }
 
     @Test
+    void reviewReturnsPlainTextWithoutJsonSchema() throws Exception {
+        // P1-B: free-form gate review - the stub's plain prose passes through verbatim
+        String prose = "Gate FAILED. case-b flipped to flaky; do not ship until the "
+                + "wrong-conclusion repeats are explained.";
+        HttpServer server = startJudgeServer(List.of(prose));
+        try {
+            OpenAiJudge judge = judgeAt(server);
+            String review = judge.review("# Release gate review request\nGate verdict: FAILED ...");
+            assertEquals(prose, review);
+            assertEquals(1, judge.endpointCalls());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void retriesOnSchemaViolationThenSucceeds() throws Exception {
         HttpServer server = startJudgeServer(List.of(
                 "{\"score\":1.5,\"passed\":true,\"reason\":\"out of range\"}", VERDICT));

@@ -15,6 +15,11 @@
     collections. SpotBugs 4.8.3 does not track the copies through this nested
     record's canonical constructor (the identical pattern in CorpusLoader
     passes) - detector limitation, not an exposed representation.
+
+  - ScoreRecord EI_EXPOSE_REP: same family as ApprovedBaseline$Baseline - the
+    caseOutcomes map is defensively copied in the compact constructor (fresh
+    TreeMap + List.copyOf per value), so accessors hand out unmodifiable data.
+    SpotBugs does not track the copies through the Collectors.toMap pipeline.
 -->
 <FindBugsFilter>
   <Match>
@@ -23,6 +28,10 @@
   </Match>
   <Match>
     <Class name="com.agentlens.eval.ApprovedBaseline$Baseline"/>
+    <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+  <Match>
+    <Class name="com.agentlens.eval.ScoreRecord"/>
     <Bug pattern="EI_EXPOSE_REP"/>
   </Match>
 </FindBugsFilter>

@@ -83,6 +83,13 @@ AgentLensApp serve [--db PATH] [--port N] [--artifacts FILE,FILE] [--scenarios-o
 #   （POST /api/scenarios，golden 答案+实际工具序列，ScenarioLoader 可直接读回），
 #   并可人工标注 PASS/FAIL（POST /api/runs/{id}/annotate）进 Review queue 复审
 
+# 版本对比 + 发版门禁（exit 0/100/1/2 契约；P1-B：--review 注入 LLM 评审、--scores-out 存原始 k 次分数）
+AgentLensApp compare --baseline correct --candidate flaky [--repeats K] [--review] [--scores-out PATH] [--out PATH]
+
+# 口径重算（P1-B）：原始 k 次分数落盘一次，pass@k/pass^k/at-least-m 随时重算、零重跑
+AgentLensApp scores --out PATH [--db PATH] [--version V]   # 从库捕获原始分数
+AgentLensApp scores --reduce PATH [--at-least M]           # 从工件重算指标
+
 # 冒烟测试
 AgentLensApp demo
 

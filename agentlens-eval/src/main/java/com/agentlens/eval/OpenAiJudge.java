@@ -130,6 +130,48 @@ public final class OpenAiJudge implements LlmJudge {
         List<Map<String, Object>> messages = List.of(
                 Map.of("role", "system", "content", systemPrompt()),
                 Map.of("role", "user", "content", userPrompt(task, criterion, digest)));
+        String content = chat(messages, jsonMode, attemptTemperature);
+        return toResult(criterion, parseVerdict(content));
+    }
+
+    /**
+     * P1-B: free-form review call (gate review, narrative summaries) - plain
+     * text in, plain text out, retried like a judgment but without the JSON
+     * verdict schema. Callers fail open on exceptions.
+     */
+    @Override
+    public String review(String prompt) throws Exception {
+        Exception lastError = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                endpointCalls.incrementAndGet();
+                double attemptTemperature = Math.min(1.0, temperature + 0.3 * (attempt - 1));
+                List<Map<String, Object>> messages = List.of(
+                        Map.of("role", "system", "content", REVIEW_SYSTEM_PROMPT),
+                        Map.of("role", "user", "content", prompt));
+                return chat(messages, false, attemptTemperature);
+            } catch (Exception e) {
+                lastError = e;
+            }
+        }
+        throw new IllegalStateException("judge review failed after " + maxAttempts + " attempts: "
+                + lastError, lastError);
+    }
+
+    private static final String REVIEW_SYSTEM_PROMPT = """
+            You are a release gate reviewer for AI agent evaluations. You receive the \
+            gate verdict, aggregate pass^k metrics, per-case outcomes and an evidence \
+            chain. Answer as concise plain-text prose (no JSON, no markdown headings).""";
+
+    /**
+     * One chat completion through the configured transport (OpenAI-compatible or
+     * native Ollama); returns the assistant message content.
+     *
+     * @param useJson when true, asks for a strict JSON object (response_format /
+     *                Ollama format:"json"); the review path passes false
+     */
+    private String chat(List<Map<String, Object>> messages, boolean useJson,
+                        double attemptTemperature) throws Exception {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", model);
         payload.put("messages", messages);
@@ -139,12 +181,14 @@ public final class OpenAiJudge implements LlmJudge {
         String endpointPath = "/v1/chat/completions";
         if (ollamaNative) {
             // Native Ollama transport: format:"json" constrains generation at the
-            // grammar level (the OpenAI-compat layer ignores response_format).
+            // grammar level when a strict JSON verdict is requested (the
+            // OpenAI-compat layer ignores response_format); plain reviews use the
+            // same /api/chat endpoint without the format constraint.
             endpointPath = "/api/chat";
-            payload.remove("temperature");
             payload.remove("response_format");
+            payload.remove("temperature");
             payload.put("stream", false);
-            payload.put("format", "json");
+            if (useJson) payload.put("format", "json");
             payload.put("options", Map.of("temperature", attemptTemperature));
         }
 
@@ -159,8 +203,7 @@ public final class OpenAiJudge implements LlmJudge {
             throw new IllegalStateException("judge endpoint returned " + response.statusCode()
                     + ": " + abbreviate(response.body()));
         }
-        String content = extractContent(response.body());
-        return toResult(criterion, parseVerdict(content));
+        return extractContent(response.body());
     }
 
     private String systemPrompt() {
