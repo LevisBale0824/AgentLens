@@ -293,7 +293,10 @@ P2 LLM Judge / Web UI / 外部集成
   **M2 已落地（2026-10-15）**：瀑布时间线（waterfall/list 切换 + 类型着色 + 时间轴）+ raw JSON
   抽屉 + 工件查看页（`/api/artifacts`，compare/标定/approved-baseline 结构化渲染，serve 默认扫
   output/ baseline/、可 `--artifacts` 指定）+ 导入历史记录（`import_log` 表 + `GET /api/imports`，
-  成功/跳过/失败均记一行）（ROADMAP 7.14）；剩 M3（详情页"保存为评测场景"/人工标注/事件步进回放）。
+  成功/跳过/失败均记一行）（ROADMAP 7.14）。
+  **M3 已落地（2026-10-15）**：详情页"保存为评测场景"（`POST /api/scenarios` + `serve
+  --scenarios-out`，upsert 合并、ScenarioLoader 可读回）+ 人工标注（`annotations` 表 +
+  `POST /api/runs/{id}/annotate` + 复审队列）+ 事件步进回放（ROADMAP 7.15）。本项 M1-M3 全部完成。
 - **P2**：`bfcl-import`（BFCL 期望调用序列→Scenario）；τ-bench 政策场景→ComplianceEvaluator 用例；
   语料合成工作流（文档→LLM 生成→人工筛选固化）；Dashboard 静态 bundle 导出（PR 工件）；
   部位级 judge 绑定；失败 run 聚类；原生 DeepEval subprocess 阶段二（G-Eval/DAG）。

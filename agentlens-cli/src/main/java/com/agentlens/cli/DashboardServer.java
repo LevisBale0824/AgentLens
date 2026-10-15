@@ -4,9 +4,11 @@ import com.agentlens.core.AgentRun;
 import com.agentlens.core.Diagnosis;
 import com.agentlens.core.EvaluationResult;
 import com.agentlens.eval.DiagnosisEngine;
+import com.agentlens.eval.Scenario;
 import com.agentlens.eval.SqliteRunStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
@@ -51,10 +53,19 @@ import java.util.Optional;
  *                           artifacts found in output/ and baseline/ (or the
  *                           serve --artifacts list), with a sniffed kind
  * GET /api/artifacts/{id}-> M2: one artifact's parsed JSON content
+ * POST /api/scenarios    -> M3: save a run as a dataset Scenario case
+ *                           {runId, instruction?, expected?} - requires
+ *                           serve --scenarios-out PATH (opt-in write path,
+ *                           upserts by case id)
+ * POST /api/runs/{id}/annotate -> M3: human review verdict {passed, note,
+ *                           annotatedBy} for the review queue
+ * GET /api/annotations   -> M3: every human annotation, newest first
  * </pre>
  *
- * The dashboard is read-only except POST /api/import - the single, tagged
- * write path (imports never delete and never overwrite without ?overwrite).
+ * The dashboard is read-only except the tagged write paths (M1 import, M3
+ * scenario save + annotation) - imports never delete and never overwrite
+ * without ?overwrite; scenario saving is disabled until --scenarios-out is
+ * given.
  */
 public final class DashboardServer implements AutoCloseable {
     private static final int MAX_IMPORT_BYTES = 64 * 1024 * 1024;
@@ -62,8 +73,12 @@ public final class DashboardServer implements AutoCloseable {
     private final SqliteRunStore store;
     private final SessionImportService importService;
     private final List<Path> artifactFiles;
+    private final Path scenariosOut;
     private final HttpServer server;
     private final ObjectMapper json = new ObjectMapper();
+    /** Scenario files are snake_case (ScenarioLoader reads them that way). */
+    private final ObjectMapper scenarioJson = new ObjectMapper()
+            .setPropertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE);
     private final DiagnosisEngine diagnosisEngine = new DiagnosisEngine();
 
     public DashboardServer(SqliteRunStore store, int port) throws IOException {
@@ -71,9 +86,15 @@ public final class DashboardServer implements AutoCloseable {
     }
 
     public DashboardServer(SqliteRunStore store, int port, List<Path> artifacts) throws IOException {
+        this(store, port, artifacts, null);
+    }
+
+    public DashboardServer(SqliteRunStore store, int port, List<Path> artifacts,
+                           Path scenariosOut) throws IOException {
         this.store = store;
         this.importService = new SessionImportService(store);
         this.artifactFiles = artifacts == null ? List.of() : List.copyOf(artifacts);
+        this.scenariosOut = scenariosOut;
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", exchange -> respond(exchange, 200, "text/html; charset=utf-8", INDEX_HTML));
         server.createContext("/api/summary", exchange ->
@@ -82,6 +103,10 @@ public final class DashboardServer implements AutoCloseable {
             String path = exchange.getRequestURI().getPath();
             if (path.equals("/api/runs")) {
                 respondJson(exchange, 200, runSummaries());
+            } else if (path.startsWith("/api/runs/") && path.endsWith("/annotate")) {
+                String id = path.substring("/api/runs/".length(),
+                        path.length() - "/annotate".length());
+                annotate(exchange, id);
             } else if (path.startsWith("/api/runs/")) {
                 String id = path.substring("/api/runs/".length());
                 var detail = runDetail(id);
@@ -91,8 +116,15 @@ public final class DashboardServer implements AutoCloseable {
                 respondJson(exchange, 404, Map.of("error", "not found"));
             }
         });
-        server.createContext("/api/scenarios", exchange ->
-                respondJson(exchange, 200, scenarios()));
+        server.createContext("/api/scenarios", exchange -> {
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                saveScenario(exchange);
+                return;
+            }
+            respondJson(exchange, 200, scenarios());
+        });
+        server.createContext("/api/annotations", exchange ->
+                respondJson(exchange, 200, Map.of("annotations", annotationList())));
         server.createContext("/api/diff", exchange -> {
             var query = parseQuery(exchange.getRequestURI().getRawQuery());
             respondJson(exchange, 200, diff(query.get("baseline"), query.get("candidate")));
@@ -265,7 +297,148 @@ public final class DashboardServer implements AutoCloseable {
                         "metadata", e.metadata()))
                 .orElse(null));
         out.put("diagnoses", diagnoses.stream().map(DashboardServer::diagnosisMap).toList());
+        out.put("annotation", store.loadAnnotation(runId)
+                .<Object>map(DashboardServer::annotationMap).orElse(null));
         return out;
+    }
+
+    /** M3: human review verdict for one run (upsert). */
+    private void annotate(HttpExchange exchange, String runId) throws IOException {
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            respondJson(exchange, 405, Map.of("error",
+                    "POST {\"passed\":true,\"note\":\"...\"} to /api/runs/{id}/annotate"));
+            return;
+        }
+        if (store.loadRun(runId).isEmpty()) {
+            respondJson(exchange, 404, Map.of("error", "run not found: " + runId));
+            return;
+        }
+        Map<String, Object> body = readJsonBody(exchange);
+        String note = stringOrNull(body.get("note"));
+        String by = stringOrNull(body.get("annotatedBy"));
+        boolean passed = Boolean.parseBoolean(String.valueOf(body.get("passed")));
+        store.saveAnnotation(new SqliteRunStore.Annotation(runId, passed, note, by, null));
+        respondJson(exchange, 200, Map.of("annotated", true, "runId", runId,
+                "passed", passed, "note", note == null ? "" : note));
+    }
+
+    /** M3: every annotation, newest first, enriched with the run's task/status. */
+    private List<Map<String, Object>> annotationList() throws IOException {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (SqliteRunStore.Annotation a : store.annotationHistory()) {
+            Map<String, Object> row = new LinkedHashMap<>(annotationMap(a));
+            store.loadRun(a.runId()).ifPresent(run -> {
+                row.put("taskId", run.taskId());
+                row.put("status", run.status().name());
+            });
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> annotationMap(SqliteRunStore.Annotation a) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("runId", a.runId());
+        out.put("passed", a.passed());
+        out.put("note", a.note());
+        out.put("annotatedBy", a.annotatedBy());
+        out.put("createdAt", a.createdAt());
+        return out;
+    }
+
+    /**
+     * M3: saves a run as a dataset Scenario case - instruction + golden answer
+     * (expected root cause) + the tools the trace actually used. Upserts by
+     * case id into the --scenarios-out file; disabled (400) unless the flag
+     * was given at startup.
+     */
+    private void saveScenario(HttpExchange exchange) throws IOException {
+        if (scenariosOut == null) {
+            respondJson(exchange, 400, Map.of("error",
+                    "scenario saving is disabled - start serve with --scenarios-out PATH"));
+            return;
+        }
+        Map<String, Object> body = readJsonBody(exchange);
+        String runId = stringOrNull(body.get("runId"));
+        if (runId == null || store.loadRun(runId).isEmpty()) {
+            respondJson(exchange, 404, Map.of("error", "run not found: " + runId));
+            return;
+        }
+        AgentRun run = store.loadRun(runId).orElseThrow();
+        String expected = stringOrNull(body.get("expected"));
+        String instruction = stringOrNull(body.get("instruction"));
+        List<String> tools = run.events().stream()
+                .filter(e -> e.type() == com.agentlens.core.EventType.TOOL_CALL && e.name() != null)
+                .map(com.agentlens.core.AgentEvent::name)
+                .distinct()
+                .toList();
+        if (tools.isEmpty()) tools = List.of("none");
+        String id = "board-" + run.taskId();
+        // upsert merges: fields absent from the request keep their saved values
+        Map<String, Object> existing = loadExistingCase(id);
+        if (expected == null || expected.isBlank()) {
+            expected = existing != null && existing.get("root_cause") != null
+                    ? String.valueOf(existing.get("root_cause"))
+                    : (run.finalAnswer() == null ? "(not captured)" : run.finalAnswer());
+        }
+        if (instruction == null || instruction.isBlank()) {
+            instruction = existing != null && existing.get("instruction") != null
+                    ? String.valueOf(existing.get("instruction"))
+                    : "Diagnose " + run.taskId() + " (saved from board run " + runId + ")";
+        }
+        Scenario scenario = new Scenario(id, "board-saved", run.taskId(), List.of(),
+                expected, tools, List.of(),
+                List.of("final answer states the expected root cause"),
+                Math.max(10, run.events().size()), "correct", "mock", null, instruction, null);
+        int total = upsertScenario(scenario);
+        respondJson(exchange, 200, Map.of("saved", true, "id", id,
+                "file", scenariosOut.toString(), "total", total));
+    }
+
+    /** The saved case with this id, or null when the file lacks it. */
+    private Map<String, Object> loadExistingCase(String id) throws IOException {
+        if (scenariosOut == null || !Files.exists(scenariosOut)) return null;
+        List<Map<String, Object>> cases = json.readValue(scenariosOut.toFile(),
+                new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+        return cases.stream().filter(c -> id.equals(c.get("id"))).findFirst().orElse(null);
+    }
+
+    /** Reads the scenarios file (if any), replaces/inserts by id, writes back. */
+    private int upsertScenario(Scenario scenario) throws IOException {
+        List<Map<String, Object>> cases = new ArrayList<>();
+        if (Files.exists(scenariosOut)) {
+            try {
+                cases.addAll(json.readValue(scenariosOut.toFile(),
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {}));
+            } catch (IOException e) {
+                throw new IOException("existing scenarios file is not a JSON array: " + scenariosOut, e);
+            }
+        }
+        Map<String, Object> asMap = json.readValue(
+                scenarioJson.writerWithDefaultPrettyPrinter().writeValueAsString(scenario),
+                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        cases.removeIf(c -> scenario.id().equals(c.get("id")));
+        cases.add(asMap);
+        Path parent = scenariosOut.getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Files.writeString(scenariosOut,
+                json.writerWithDefaultPrettyPrinter().writeValueAsString(cases));
+        return cases.size();
+    }
+
+    private Map<String, Object> readJsonBody(HttpExchange exchange) throws IOException {
+        try {
+            return json.readValue(exchange.getRequestBody(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+        } catch (IOException e) {
+            return Map.of();
+        }
+    }
+
+    private static String stringOrNull(Object value) {
+        if (value == null) return null;
+        String s = String.valueOf(value);
+        return s.isBlank() ? null : s;
     }
 
     public List<Map<String, Object>> runSummaries() throws IOException {
@@ -627,6 +800,9 @@ public final class DashboardServer implements AutoCloseable {
               <table style="margin-top:14px"><thead><tr><th>time</th><th>file</th><th>kind</th><th>source</th>
                 <th>imported</th><th>skipped</th><th>error</th></tr></thead>
                 <tbody id="importLog"></tbody></table>
+              <h2>Review queue <span class="pill src">M3</span></h2>
+              <table><thead><tr><th>run</th><th>task</th><th>label</th><th>note</th><th>by</th><th>at</th></tr></thead>
+                <tbody id="reviewLog"></tbody></table>
               <h2>Artifacts <span class="pill src">M2</span></h2>
               <div style="margin-bottom:8px">
                 <select id="artifactSel"><option value="">choose artifact…</option></select>
@@ -736,17 +912,31 @@ public final class DashboardServer implements AutoCloseable {
               const d = await j("/api/runs/" + id);
               const el = $("detail");
               el.style.display = "block";
+              el.dataset.fa = d.finalAnswer ?? "";
+              el.dataset.id = id;
               const r = d.run;
               window.__events = d.events ?? [];
               let html = `<h2 style="margin-top:4px"><code>${esc(r.taskId)}</code>
                           ${r.status === "SUCCESS" ? pill(r.status, "ok") : pill(r.status, "bad")}
                           ${srcPill(d)}
+                          ${d.annotation ? (d.annotation.passed ? pill("annotated PASS", "ok") : pill("annotated FAIL", "bad")) : ""}
                           <span class="muted">· ${r.durationMs}ms · ${r.events} events</span></h2>`;
               if (d.finalAnswer) html += `<div class="ev"><b>final answer:</b> ${esc(d.finalAnswer)}</div>`;
               if (d.error) html += `<div class="ev"><b style="color:var(--bad)">error:</b> ${esc(d.error)}</div>`;
+              if (d.annotation) html += `<div class="ev"><b>human review:</b> ${esc(d.annotation.note ?? "")}
+                 <span class="muted">by ${esc(d.annotation.annotatedBy ?? "-")}
+                 at ${esc(String(d.annotation.createdAt).replace("T", " ").slice(0, 19))}</span></div>`;
               html += `<h2 style="margin-top:10px">Trace timeline
                 <span class="tgl"><button id="tglWf" class="on" onclick="setTl(true)">waterfall</button>
-                <button id="tglLs" onclick="setTl(false)">list</button></span></h2><div id="tl"></div>`;
+                <button id="tglLs" onclick="setTl(false)">list</button></span></h2>
+                <div id="replayBar"></div><div id="tl"></div>`;
+              html += `<h2>Human review <span class="pill src">M3</span></h2>
+                <div class="ev" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <select id="annPass"><option value="true">PASS</option><option value="false">FAIL</option></select>
+                  <input id="annNote" placeholder="review note / real root cause" style="flex:1;min-width:200px">
+                  <button onclick="saveAnnotation('${esc(id)}')">annotate</button>
+                  <button onclick="saveScenario('${esc(id)}')">save as scenario</button>
+                </div>`;
               if (d.evaluation) {
                 html += `<h2>Evaluation (${esc(d.evaluation.agentVersion ?? "")})</h2>` +
                   d.evaluation.results.map(x =>
@@ -764,7 +954,55 @@ public final class DashboardServer implements AutoCloseable {
                        <pre class="raw">${esc(JSON.stringify(d, null, 2))}</pre></details>`;
               el.innerHTML = html;
               renderTl();
+              renderReplay(0);
               el.scrollIntoView({behavior: "smooth"});
+            }
+
+            /* M3 step-through replay: walk the trace one event at a time with
+               the full event payload visible - the "watch it happen" view. */
+            function renderReplay(i) {
+              const evs = window.__events ?? [];
+              const bar = $("replayBar");
+              if (!bar || !evs.length) { if (bar) bar.innerHTML = ""; return; }
+              const idx = Math.max(0, Math.min(i, evs.length - 1));
+              const e = evs[idx];
+              bar.innerHTML = `<div class="ev">
+                <button onclick="renderReplay(0)">⏮</button>
+                <button onclick="renderReplay(${idx - 1})">◀</button>
+                <b>#${idx + 1}/${evs.length}</b>
+                <button onclick="renderReplay(${idx + 1})">▶</button>
+                <button onclick="renderReplay(${evs.length - 1})">⏭</button>
+                <b>${esc(e.type)}</b> ${esc(e.name ?? "")}
+                ${e.durationMs ? e.durationMs + "ms" : ""}
+                <pre class="raw" style="max-height:150px;margin-top:6px">${esc(JSON.stringify(e, null, 2))}</pre>
+              </div>`;
+            }
+
+            async function saveAnnotation(id) {
+              const body = {passed: $("annPass").value === "true",
+                            note: $("annNote").value, annotatedBy: "board"};
+              const r = await fetch("/api/runs/" + id + "/annotate", {method: "POST",
+                headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+              const out = await r.json();
+              $("importOut").innerHTML = `<div class="imp${r.ok ? "" : " bad"}">${r.ok
+                  ? `<b>annotated</b> ${esc(out.runId)} → ${out.passed ? "PASS" : "FAIL"}`
+                  : `<b>annotate failed</b>: ${esc(out.error ?? "")}`}</div>`;
+              if (r.ok) openRun(id);
+            }
+
+            async function saveScenario(id) {
+              const expected = prompt("expected root cause (golden answer of the saved case):",
+                  document.getElementById("detail").dataset.fa ?? "");
+              if (expected == null) return;
+              const instruction = prompt("instruction for the saved case:", "Diagnose this incident");
+              if (instruction == null) return;
+              const r = await fetch("/api/scenarios", {method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({runId: id, instruction: instruction, expected: expected})});
+              const out = await r.json();
+              $("importOut").innerHTML = `<div class="imp${r.ok ? "" : " bad"}">${r.ok
+                  ? `<b>scenario saved</b>: ${esc(out.id)} → ${esc(out.file)} (${out.total} cases)`
+                  : `<b>save failed</b>: ${esc(out.error ?? "")}`}</div>`;
             }
 
             let tlWaterfall = true;
@@ -959,6 +1197,15 @@ public final class DashboardServer implements AutoCloseable {
                    <td class="muted">${esc(r.source)}</td><td>${r.imported}</td><td>${r.skipped}</td>
                    <td class="muted">${esc(r.error ?? "")}</td></tr>`).join("")
                   || '<tr><td colspan="7" class="muted">no imports yet</td></tr>';
+              }).catch(() => {});
+              j("/api/annotations").then(d => {
+                $("reviewLog").innerHTML = (d.annotations ?? []).map(a =>
+                  `<tr><td><a href="#" onclick="openRun('${esc(a.runId)}');return false"><code>${esc(a.runId)}</code></a></td>
+                   <td><code>${esc(a.taskId ?? "-")}</code></td>
+                   <td>${a.passed ? pill("PASS", "ok") : pill("FAIL", "bad")}</td>
+                   <td class="muted">${esc(a.note ?? "")}</td><td class="muted">${esc(a.annotatedBy ?? "")}</td>
+                   <td class="muted">${esc(String(a.createdAt).replace("T", " ").slice(0, 19))}</td></tr>`).join("")
+                  || '<tr><td colspan="6" class="muted">no annotations yet</td></tr>';
               }).catch(() => {});
               loadArtifacts().catch(() => {});
             }

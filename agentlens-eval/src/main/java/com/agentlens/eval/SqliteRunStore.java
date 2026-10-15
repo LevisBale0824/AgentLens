@@ -103,6 +103,16 @@ public final class SqliteRunStore implements AutoCloseable {
                         error TEXT
                     )""");
             }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS annotations (
+                        run_id TEXT PRIMARY KEY,
+                        passed INTEGER NOT NULL,
+                        note TEXT,
+                        annotated_by TEXT,
+                        created_at TEXT NOT NULL
+                    )""");
+            }
         } catch (SQLException e) {
             throw new IOException("cannot open sqlite run store: " + file, e);
         }
@@ -307,6 +317,65 @@ public final class SqliteRunStore implements AutoCloseable {
             }
         } catch (SQLException e) {
             throw new IOException("failed to read import history", e);
+        }
+        return List.copyOf(out);
+    }
+
+    /** M3: one human review verdict for a run (re-annotating overwrites). */
+    public record Annotation(String runId, boolean passed, String note,
+                             String annotatedBy, String createdAt) {
+    }
+
+    /** M3: inserts or replaces the human annotation for a run. */
+    public void saveAnnotation(Annotation annotation) throws IOException {
+        try (PreparedStatement stmt = conn.prepareStatement("""
+                INSERT INTO annotations (run_id, passed, note, annotated_by, created_at)
+                VALUES (?,?,?,?,?)
+                ON CONFLICT(run_id) DO UPDATE SET passed=excluded.passed, note=excluded.note,
+                    annotated_by=excluded.annotated_by, created_at=excluded.created_at""")) {
+            stmt.setString(1, annotation.runId());
+            stmt.setInt(2, annotation.passed() ? 1 : 0);
+            stmt.setString(3, annotation.note());
+            stmt.setString(4, annotation.annotatedBy());
+            stmt.setString(5, java.time.Instant.now().toString());
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            throw new IOException("failed to save annotation for " + annotation.runId(), e);
+        }
+    }
+
+    /** M3: the annotation for one run, or empty when a human has not reviewed it. */
+    public Optional<Annotation> loadAnnotation(String runId) throws IOException {
+        try (PreparedStatement stmt = conn.prepareStatement(
+                "SELECT run_id, passed, note, annotated_by, created_at FROM annotations WHERE run_id = ?")) {
+            stmt.setString(1, runId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(new Annotation(rs.getString("run_id"),
+                            rs.getInt("passed") == 1, rs.getString("note"),
+                            rs.getString("annotated_by"), rs.getString("created_at")));
+                }
+                return Optional.empty();
+            }
+        } catch (SQLException e) {
+            throw new IOException("failed to load annotation for " + runId, e);
+        }
+    }
+
+    /** M3: every human annotation, newest first - the review queue. */
+    public List<Annotation> annotationHistory() throws IOException {
+        List<Annotation> out = new ArrayList<>();
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(
+                     "SELECT run_id, passed, note, annotated_by, created_at FROM annotations"
+                             + " ORDER BY created_at DESC")) {
+            while (rs.next()) {
+                out.add(new Annotation(rs.getString("run_id"), rs.getInt("passed") == 1,
+                        rs.getString("note"), rs.getString("annotated_by"),
+                        rs.getString("created_at")));
+            }
+        } catch (SQLException e) {
+            throw new IOException("failed to read annotations", e);
         }
         return List.copyOf(out);
     }

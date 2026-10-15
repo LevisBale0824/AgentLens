@@ -431,7 +431,8 @@ public final class AgentLensApp {
                             + " [--baseline-override k=v,..] [--candidate-override k=v,..]"
                             + " [--approved baseline/approved-baseline.json] [--out PATH]"
                             + " | approve --compare PATH --out PATH | show --run ID"
-                            + " | report [--db PATH] [--out PATH] | serve [--port N] [--artifacts FILE,FILE] | otel-receive [--port N]"
+                            + " | report [--db PATH] [--out PATH] | serve [--port N] [--artifacts FILE,FILE]"
+                            + " [--scenarios-out PATH] | otel-receive [--port N]"
                             + " [--db PATH] | import --session PATH"
                             + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
                             + " [--out PATH] | demo");
@@ -488,6 +489,11 @@ public final class AgentLensApp {
                                     + Path.of(trimmed).toAbsolutePath());
                     }
                 }
+                String scenariosOut = opts.get("scenarios-out");
+                if (scenariosOut != null && !scenariosOut.isBlank()
+                        && java.nio.file.Files.isDirectory(Path.of(scenariosOut)))
+                    throw new ConfigException("--scenarios-out must be a .json file, got a directory: "
+                            + Path.of(scenariosOut).toAbsolutePath());
             }
             case "otel-receive" -> {
                 int port = requireInt(opts, "port", 4318);
@@ -645,9 +651,12 @@ public final class AgentLensApp {
                 System.err.println("warning: failed to close sqlite store: " + e);
             }
         }));
-        var dashboard = new DashboardServer(sqlite, port, artifactPaths);
-        System.out.printf("dashboard: %s  (db=%s, artifacts=%d) - Ctrl+C to stop%n",
-                dashboard.baseUrl() + "/", db.toAbsolutePath(), artifactPaths.size());
+        var dashboard = new DashboardServer(sqlite, port, artifactPaths,
+                opts.get("scenarios-out") == null || opts.get("scenarios-out").isBlank()
+                        ? null : Path.of(opts.get("scenarios-out")));
+        System.out.printf("dashboard: %s  (db=%s, artifacts=%d, scenarios-out=%s) - Ctrl+C to stop%n",
+                dashboard.baseUrl() + "/", db.toAbsolutePath(), artifactPaths.size(),
+                opts.get("scenarios-out") == null ? "(disabled)" : opts.get("scenarios-out"));
         log.event("info", "dashboard.start", "url", dashboard.baseUrl() + "/",
                 "db", db.toAbsolutePath().toString());
         new java.util.concurrent.CountDownLatch(1).await();

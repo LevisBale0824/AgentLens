@@ -157,4 +157,15 @@ class ConfigValidationTest {
                         Map.of("port", "18080", "artifacts", "missing.json,bad.json")));
         assertTrue(e.getMessage().contains("artifact not found"), e.getMessage());
     }
+
+    @Test
+    void serveScenariosOutMustNotBeADirectory() {
+        assertDoesNotThrow(() -> AgentLensApp.validate("serve",
+                Map.of("port", "18080", "scenarios-out",
+                        tempDir.resolve("saved.json").toString())));
+        ConfigException e = assertThrows(ConfigException.class,
+                () -> AgentLensApp.validate("serve",
+                        Map.of("port", "18080", "scenarios-out", tempDir.toString())));
+        assertTrue(e.getMessage().contains("must be a .json file"), e.getMessage());
+    }
 }

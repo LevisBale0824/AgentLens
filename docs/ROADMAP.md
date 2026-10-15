@@ -655,6 +655,30 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   (/api/imports 带内容、/api/artifacts 列表+解析+404);+1 配置校验测试
   (serve --artifacts 文件必须存在);Checkstyle/SpotBugs 零告警。
 
+### 7.15 看板数据沉淀(M3 已落地)
+
+历史导入(7.13)与分析(7.14)之后,把看板里"人看出来的结论"沉淀回资产——
+导入的 trace 可以变成可复跑的评测场景,人工判断变成可检索的复审记录:
+
+- **保存为评测场景**:run 详情页"save as scenario"——`POST /api/scenarios`
+  `{runId, instruction?, expected?}` 把 trace 转成 Scenario 用例(id=`board-<taskId>`,
+  root_cause=golden 答案、allowed_tools 取自 trace 实际 TOOL_CALL 序列、
+  success_assertions 给出判据),按 id **upsert 合并**(二次保存只更新请求里带的字段),
+  写入 snake_case 方言、**可直接被 `ScenarioLoader`/`run --scenarios` 读回**。
+  写路径按需开启:`serve --scenarios-out PATH` 不给则返回 400 + 提示——
+  看板默认仍只读。
+- **人工标注**:`annotations` 表(`saveAnnotation` upsert/`loadAnnotation`/
+  `annotationHistory`)+ `POST /api/runs/{id}/annotate`(passed/note/annotatedBy)
+  + `GET /api/annotations` 复审队列(带 taskId/status 富化);run 详情页内嵌
+  PASS/FAIL 标注表单,表头与队列同步显示"annotated PASS/FAIL"徽章——
+  标注是 approved-baseline 人工复审的素材来源。
+- **事件步进回放**:详情页时间线上方步进器(⏮◀ #i/N ▶⏭),逐步展示当前事件
+  全量 JSON 载荷,与瀑布/列表视图并存——"看它怎么发生的"视图。
+- **测试**:+1 store 标注 upsert/队列测试;+3 端点测试(annotate 落库+富化队列
+  +405/404、场景保存 upsert 且 ScenarioLoader 可读回、未开 --scenarios-out
+  返回 400 提示);+1 配置校验(--scenarios-out 不能是目录);Checkstyle/SpotBugs
+  零告警;真机冒烟:标注→详情/队列可见,场景保存→snake_case 文件可加载。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

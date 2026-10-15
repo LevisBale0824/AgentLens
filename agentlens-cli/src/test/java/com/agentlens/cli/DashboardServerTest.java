@@ -280,4 +280,74 @@ class DashboardServerTest {
             assertTrue(get(base + "/api/artifacts/notanumber").contains("no such artifact"));
         }
     }
+
+    @Test
+    void annotatePersistsSurfacesInDetailAndQueues() throws Exception {
+        try (SqliteRunStore store = storeWithOneRun(tempDir.resolve("ann.db"));
+             DashboardServer server = new DashboardServer(store, 0, List.of())) {
+            String base = server.baseUrl();
+            HttpResponse<String> resp = postJson(base + "/api/runs/" + RUN_ID + "/annotate",
+                    "{\"passed\":false,\"note\":\"missed the real root cause\",\"annotatedBy\":\"alice\"}");
+            assertTrue(resp.body().contains("\"annotated\":true"), resp.body());
+            // detail carries the annotation; queue enriches with task/status
+            String detail = get(base + "/api/runs/" + RUN_ID);
+            assertTrue(detail.contains("missed the real root cause"), detail);
+            assertTrue(detail.contains("\"annotatedBy\":\"alice\""), detail);
+            String queue = get(base + "/api/annotations");
+            assertTrue(queue.contains("dash-task"), queue);
+            assertTrue(queue.contains("\"passed\":false"), queue);
+            // re-annotate replaces; GET on the annotate route is a 405
+            postJson(base + "/api/runs/" + RUN_ID + "/annotate",
+                    "{\"passed\":true,\"note\":\"verified\"}");
+            assertTrue(get(base + "/api/runs/" + RUN_ID).contains("verified"));
+            HttpClient client = HttpClient.newHttpClient();
+            assertEquals(405, client.send(HttpRequest.newBuilder(
+                            URI.create(base + "/api/runs/" + RUN_ID + "/annotate")).GET().build(),
+                    HttpResponse.BodyHandlers.ofString()).statusCode());
+            assertEquals(404, client.send(HttpRequest.newBuilder(
+                            URI.create(base + "/api/runs/no-such/annotate"))
+                            .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                            .header("Content-Type", "application/json").build(),
+                    HttpResponse.BodyHandlers.ofString()).statusCode());
+        }
+    }
+
+    @Test
+    void saveScenarioUpsertsSnakeCaseCaseLoadableByScenarioLoader() throws Exception {
+        Path out = tempDir.resolve("saved-scenarios.json");
+        try (SqliteRunStore store = storeWithOneRun(tempDir.resolve("scen.db"));
+             DashboardServer server = new DashboardServer(store, 0, List.of(), out)) {
+            String base = server.baseUrl();
+            HttpResponse<String> saved = postJson(base + "/api/scenarios",
+                    "{\"runId\":\"" + RUN_ID + "\",\"instruction\":\"why is checkout failing?\","
+                            + "\"expected\":\"cart service OOM\"}");
+            assertTrue(saved.body().contains("\"saved\":true"), saved.body());
+            assertTrue(saved.body().contains("board-dash-task"), saved.body());
+            // upsert: second save for the same case id keeps the file at one entry
+            postJson(base + "/api/scenarios",
+                    "{\"runId\":\"" + RUN_ID + "\",\"expected\":\"updated root cause\"}");
+            var scenarios = new com.agentlens.eval.ScenarioLoader().load(out);
+            assertEquals(1, scenarios.size());
+            var s = scenarios.get(0);
+            assertEquals("board-dash-task", s.id());
+            assertEquals("updated root cause", s.rootCause());
+            assertEquals("why is checkout failing?", s.instruction());
+            assertFalse(s.allowedTools().isEmpty());
+        }
+    }
+
+    @Test
+    void saveScenarioWithoutScenariosOutIsDisabledWithHint() throws Exception {
+        try (SqliteRunStore store = storeWithOneRun(tempDir.resolve("scen-off.db"));
+             DashboardServer server = new DashboardServer(store, 0, List.of())) {
+            HttpResponse<String> resp = post(server.baseUrl() + "/api/scenarios",
+                    ("{\"runId\":\"" + RUN_ID + "\"}").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            assertEquals(400, resp.statusCode());
+            assertTrue(resp.body().contains("scenarios-out"), resp.body());
+        }
+    }
+
+    private HttpResponse<String> postJson(String url, String json) throws Exception {
+        return post(url, json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
 }

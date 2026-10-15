@@ -160,4 +160,24 @@ class SqliteRunStoreTest {
             assertEquals(1, store.importHistory(1).size());
         }
     }
+
+    @Test
+    void annotationUpsertReplacesAndQueueOrdersNewestFirst() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("annotations.db"))) {
+            assertTrue(store.annotationHistory().isEmpty());
+            assertTrue(store.loadAnnotation("run-1").isEmpty());
+            store.saveAnnotation(new SqliteRunStore.Annotation("run-1", true, "looks right", "alice", null));
+            store.saveAnnotation(new SqliteRunStore.Annotation("run-2", false, "missed root cause", "bob", null));
+            // re-annotating the same run replaces the verdict
+            store.saveAnnotation(new SqliteRunStore.Annotation("run-1", false, "actually wrong", "alice", null));
+            var ann = store.loadAnnotation("run-1").orElseThrow();
+            assertFalse(ann.passed());
+            assertEquals("actually wrong", ann.note());
+            assertEquals("alice", ann.annotatedBy());
+            var queue = store.annotationHistory();
+            assertEquals(2, queue.size());
+            assertEquals("run-1", queue.get(0).runId());
+            assertFalse(queue.get(0).passed());
+        }
+    }
 }
