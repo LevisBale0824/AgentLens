@@ -294,6 +294,8 @@ P2 LLM Judge / Web UI / 外部集成
   **p50/p95 成本时间序列已落地（2026-10-15）**：`GET /api/costs` 按版本聚合
   延迟/Token 百分位（最近秩法）+ 看板 Cost & latency by version 表
   （ROADMAP 7.21）。**借鉴清单 P1 剩余项全部完成。**
+  **CI demo 冒烟修复（2026-10-16）**：demo 步骤改 exec:java（链接期验证需
+  完整 adapter classpath）+ tool-policy 空白名单语义修正（ROADMAP 7.22）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。

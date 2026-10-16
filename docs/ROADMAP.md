@@ -818,6 +818,19 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   真机冒烟:真实历史库 5 个版本序列完整输出(dev 1029 runs p95=71ms、
   imported 62s、candidate p95=29.4s 等)。
 
+### 7.22 修复:CI demo 冒烟 + 空白名单 tool-policy(2026-10-16)
+
+- **CI demo 步骤改走 exec:java**:原步骤手拼 4 模块 classpath 直接跑
+  `AgentLensApp`——但 `AgentLensApp` 链接期验证 `dshLiveRun`(live 模式,
+  7.2 引入)时必须解析其匿名类实现的 `DshAgentAdapter$LiveListener` 接口,
+  classpath 缺 adapter-dsh → 主类初始化即 NoClassDefFoundError。与相邻
+  步骤统一为 `mvn -pl agentlens-cli exec:java`(完整运行时 classpath)。
+- **tool-policy 空白名单语义修正**:未声明 allowedTools(评测器配置与任务
+  context 均无)时 unknown-tool 检查不适用——此前任何被调工具都被判
+  unknown 导致 demo 确定性 `passed=false`;修正为仅禁止集继续强制,
+  与 compliance "未声明=不可验证"哲学一致。+2 测试(空白名单通过、
+  空白名单下 forbidden 仍拦截);demo 输出恢复 `passed=true`。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

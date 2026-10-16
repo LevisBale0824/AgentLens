@@ -33,7 +33,13 @@ public final class ToolPolicyEvaluator implements Evaluator {
         Set<String> violations = new HashSet<>(called);
         violations.retainAll(forbiddenSet);
         Set<String> unknown = new HashSet<>(called);
-        if (!allowedSet.isEmpty()) {
+        if (allowedSet.isEmpty()) {
+            // no allowlist declared anywhere (evaluator config + task context):
+            // the unknown-tool check is not applicable - anything not explicitly
+            // forbidden is fair game, mirroring ComplianceEvaluator's rule that
+            // undeclared constraints are "not verifiable" rather than violations
+            unknown.clear();
+        } else {
             unknown.removeAll(allowedSet);
             unknown.removeAll(forbiddenSet);
         }
