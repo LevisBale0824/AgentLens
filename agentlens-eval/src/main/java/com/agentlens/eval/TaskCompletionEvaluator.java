@@ -17,6 +17,10 @@ public final class TaskCompletionEvaluator implements Evaluator {
                 && run.finalAnswer() != null && !run.finalAnswer().isBlank();
         return new EvaluationResult(name(), passed, passed ? 1.0 : 0.0,
                 passed ? "Agent completed the task" : "Agent did not produce a successful final result",
-                Map.of("status", run.status().name(), "eventCount", run.events().size()));
+                Map.of("status", run.status().name(), "eventCount", run.events().size()),
+                EvaluationResult.excerpt(run.finalAnswer(), 160),
+                "status=" + run.status() + ", finalAnswer="
+                        + (run.finalAnswer() == null ? "absent" : "present ("
+                        + run.finalAnswer().strip().length() + " chars)"));
     }
 }

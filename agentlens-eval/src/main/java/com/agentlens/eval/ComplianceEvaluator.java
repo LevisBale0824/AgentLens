@@ -141,7 +141,10 @@ public final class ComplianceEvaluator implements Evaluator {
         evidence.put("softViolations", soft);
         evidence.put("lightViolations", light);
         evidence.put("notVerifiable", notVerifiable);
-        return new EvaluationResult(name(), passed, score, reason, evidence);
+        String explanation = "hard=" + hard + ", soft=" + soft + ", light events=" + light
+                + ", not verifiable=" + notVerifiable
+                + (light > 0 ? "; -0.08 per light event, floored at 0.6" : "");
+        return new EvaluationResult(name(), passed, score, reason, evidence, null, explanation);
     }
 
     // ---- verdict assembly -------------------------------------------------

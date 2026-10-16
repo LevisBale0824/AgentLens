@@ -760,6 +760,29 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   真机冒烟:带代数断言的场景 2 例——通过例门禁 exit 0;含不可能断言
   `w3:quota exceeded` 例 STABLE_FAIL、pass^k=0.5、门禁拦截。
 
+### 7.19 scorer 契约(P1 已落地)
+
+对齐 Inspect AI 的 scorer 形态:`EvaluationResult` 统一为
+**{value(score), answer, explanation, reason}** 四维——value/reason 已有,
+新增可选 `answer`(被测 agent 实际回答的定长摘要)与 `explanation`
+(人类可读判定依据),5 参旧构造器保留、全部既有评测器零改动兼容:
+
+- **填充**:task-completion(answer=finalAnswer≤160 字符摘要 + why=状态与
+  答案长度)、run-limits(why=已用/允许步数)、tool-policy(why=forbidden/unknown
+  集合摘要)、compliance(why=hard/soft/light 计数与扣分规则)、success-assertions
+  (answer 摘要 + why=逐断言 PASS/FAIL 清单)、llm-judge(answer 摘要 +
+  why=判定/降级计数)。DeepEval 适配器走既有 reason。
+- **展示**:`show --run` 评测行升级为 `passed/score/reason + answer + why`
+  三行式(三处打印统一);看板 runDetail evaluation 卡片追加 answer/why 行;
+  `/api/runs/{id}` results 增加 answer/explanation 字段。
+- **兼容**:老工件/老库行缺两维 → 反序列化为 null,展示层按 null 跳过;
+  SQLite 往返、ScoreRecord、GateReview 均不受影响。
+- **测试**:+3 契约单测(兼容构造器、空白规范化、excerpt 截断);评测器
+  断言扩展(success-assertions 的 answer/why);全链路既有测试零回归。
+  真机冒烟:断言代数双例入库 → 看板 API 逐评测器验证 answer/explanation
+  到位(success-assertions why = "PASS root cause; PASS not-crashloop;
+  FAIL w3:quota exceeded")。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

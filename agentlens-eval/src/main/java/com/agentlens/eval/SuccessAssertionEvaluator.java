@@ -47,16 +47,22 @@ public final class SuccessAssertionEvaluator implements Evaluator {
         List<Map<String, Object>> outcomeEvidence = new ArrayList<>();
         result.outcomes().forEach(o -> outcomeEvidence.add(Map.of(
                 "spec", o.spec(), "satisfied", o.satisfied())));
+        String firstFailure = result.outcomes().stream()
+                .filter(o -> !o.satisfied())
+                .map(o -> (o.negated() ? "must not contain: " : "missing: ") + o.spec())
+                .findFirst()
+                .orElse(null);
         String summary = result.passed()
                 ? "all " + assertions.size() + " success assertions satisfied"
-                : result.outcomes().stream()
-                        .filter(o -> !o.satisfied())
-                        .map(o -> (o.negated() ? "must not contain: " : "missing: ") + o.spec())
-                        .findFirst()
-                        .orElse("success assertions not satisfied");
+                : firstFailure;
+        String explanation = result.outcomes().stream()
+                .map(o -> (o.satisfied() ? "PASS " : "FAIL ") + o.spec())
+                .reduce((a, b) -> a + "; " + b)
+                .orElse("no assertions");
         return new EvaluationResult(name(), result.passed(), result.score(), summary,
                 Map.of("declared", assertions.size(),
                         "weightedScore", result.score(),
-                        "outcomes", outcomeEvidence));
+                        "outcomes", outcomeEvidence),
+                EvaluationResult.excerpt(run.finalAnswer(), 160), explanation);
     }
 }

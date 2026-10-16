@@ -29,6 +29,11 @@ class SuccessAssertionEvaluatorTest {
         assertTrue(result.passed(), result.reason());
         assertEquals(1.0, result.score(), 1e-9);
         assertEquals(3, result.evidence().get("declared"));
+        // scorer contract: answer + explanation dimensions are filled
+        assertTrue(result.answer() != null && result.answer().contains("Root cause"),
+                result.answer());
+        assertTrue(result.explanation() != null && result.explanation().startsWith("PASS "),
+                result.explanation());
     }
 
     @Test

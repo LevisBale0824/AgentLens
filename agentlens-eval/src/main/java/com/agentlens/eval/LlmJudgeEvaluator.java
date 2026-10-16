@@ -100,7 +100,10 @@ public final class LlmJudgeEvaluator implements Evaluator {
         metadata.put("judge.status", degraded.isEmpty() ? "ok" : "partial");
         judged.forEach(o -> metadata.put(o.name(), o.result().score()));
         if (!degraded.isEmpty()) metadata.put("judge.degraded", List.copyOf(degraded));
-        return new EvaluationResult(EVALUATOR_NAME, passed, score, String.join(" | ", finalReasons), metadata);
+        String explanation = "criteria " + criteria.size() + ", judged " + judged.size()
+                + (degraded.isEmpty() ? "" : ", degraded " + degraded.size());
+        return new EvaluationResult(EVALUATOR_NAME, passed, score, String.join(" | ", finalReasons),
+                metadata, EvaluationResult.excerpt(run.finalAnswer(), 160), explanation);
     }
 
     private static String rootMessage(Throwable e) {

@@ -670,6 +670,9 @@ public final class DashboardServer implements AutoCloseable {
         out.put("score", r.score());
         out.put("reason", r.reason());
         out.put("evidence", r.evidence());
+        // scorer contract (P1): optional answer/explanation dimensions
+        out.put("answer", r.answer());
+        out.put("explanation", r.explanation());
         return out;
     }
 
@@ -941,7 +944,9 @@ public final class DashboardServer implements AutoCloseable {
                 html += `<h2>Evaluation (${esc(d.evaluation.agentVersion ?? "")})</h2>` +
                   d.evaluation.results.map(x =>
                     `<div class="ev">${x.passed ? pill("PASS", "ok") : pill("FAIL", "bad")}
-                     <b>${esc(x.evaluator)}</b> score=${x.score} — ${esc(x.reason)}</div>`).join("");
+                     <b>${esc(x.evaluator)}</b> score=${x.score} — ${esc(x.reason)}</div>` +
+                    (x.answer ? `<div class="ev muted">answer: ${esc(x.answer)}</div>` : "") +
+                    (x.explanation ? `<div class="ev muted">why: ${esc(x.explanation)}</div>` : "")).join("");
               }
               html += `<h2>Diagnoses (${d.diagnoses.length})</h2>` + (d.diagnoses.length === 0
                 ? `<div class="ev muted">none</div>`

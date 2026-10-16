@@ -38,9 +38,13 @@ public final class ToolPolicyEvaluator implements Evaluator {
             unknown.removeAll(forbiddenSet);
         }
         boolean passed = violations.isEmpty() && unknown.isEmpty();
+        String explanation = passed
+                ? "called " + called.size() + " distinct tool(s); forbidden=0, unknown=0"
+                : "forbidden=" + violations + ", unknown=" + unknown;
         return new EvaluationResult(name(), passed, passed ? 1.0 : 0.0,
                 passed ? "Tool policy satisfied" : "Tool policy violation detected",
-                Map.of("called", called, "forbidden", violations, "unknown", unknown));
+                Map.of("called", called, "forbidden", violations, "unknown", unknown),
+                null, explanation);
     }
 
     private static Set<String> union(Set<String> staticSet, Object contextValue) {

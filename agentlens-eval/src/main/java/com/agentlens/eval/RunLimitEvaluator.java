@@ -19,6 +19,9 @@ public final class RunLimitEvaluator implements Evaluator {
         boolean passed = steps <= task.maxSteps();
         return new EvaluationResult(name(), passed, passed ? 1.0 : 0.0,
                 passed ? "Run stayed within step limit" : "Run exceeded step limit",
-                Map.of("steps", steps, "maxSteps", task.maxSteps(), "status", run.status().name()));
+                Map.of("steps", steps, "maxSteps", task.maxSteps(), "status", run.status().name()),
+                null,
+                "used " + steps + " of " + task.maxSteps() + " allowed steps (status="
+                        + run.status() + ")");
     }
 }

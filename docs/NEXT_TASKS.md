@@ -281,10 +281,13 @@ P2 LLM Judge / Web UI / 外部集成
   **P1-B 口径对齐已落地（2026-10-15）**：ScoreRecord 原始 k 次分数工件 +
   PassK 原始归约器（pass@k/pass^k/at-least-m 事后重算）+ `scores` 捕获/重算子命令 +
   `compare --review`（pass^k+证据链→LLM 评审，fail-open）+ `compare --scores-out`
-  （ROADMAP 7.16）。剩余：分数三来源模型、p50/p95 成本序列、scorer 契约。
+  （ROADMAP 7.16）。剩余：分数三来源模型、p50/p95 成本序列。
   **断言代数已落地（2026-10-15）**：success_assertions 可执行——`not-` 反转 /
   `w<N>:` 权重 / `<k>-of:` assert-set，SuccessAssertionEvaluator 接入全部
   场景驱动路径（ROADMAP 7.18）。
+  **scorer 契约已落地（2026-10-15）**：EvaluationResult 统一
+  {value/answer/explanation/reason}，5 参构造器向后兼容，show/看板/API 三处
+  展示（ROADMAP 7.19）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。

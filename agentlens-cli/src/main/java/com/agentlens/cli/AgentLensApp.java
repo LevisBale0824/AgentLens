@@ -163,8 +163,7 @@ public final class AgentLensApp {
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         var results = registry.evaluate(task, run);
         System.out.println("  evaluation:");
-        results.forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
-                r.evaluator(), r.passed(), r.reason()));
+        printEvaluationRows(results);
         if (opts.containsKey("judge")) {
             System.out.println("  (judge scores are informational here and not persisted)");
         }
@@ -230,8 +229,7 @@ public final class AgentLensApp {
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         var results = registry.evaluate(task, run);
         System.out.println("  evaluation:");
-        results.forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
-                r.evaluator(), r.passed(), r.reason()));
+        printEvaluationRows(results);
         var diagnoses = new com.agentlens.eval.DiagnosisEngine().diagnose(task, run, results);
         System.out.printf("  diagnoses: %d%n", diagnoses.size());
         diagnoses.forEach(d -> System.out.printf("    %-15s %-45s evidence=%s%n",
@@ -398,14 +396,26 @@ public final class AgentLensApp {
                     e.type(), e.name(), e.durationMs(), e.attributes()));
             sqlite.loadEvaluation(runId).ifPresentOrElse(ev -> {
                 System.out.println("  evaluation:");
-                ev.results().forEach(r -> System.out.printf("    %-18s passed=%-5s %s%n",
-                        r.evaluator(), r.passed(), r.reason()));
+                printEvaluationRows(ev.results());
                 if (!ev.metadata().isEmpty()) {
                     System.out.println("  metadata:");
                     ev.metadata().forEach((k, v) -> System.out.printf("    %-16s %s%n", k, v));
                 }
             }, () -> System.out.println("  evaluation: none recorded"));
         }
+    }
+
+    /**
+     * Scorer contract output (P1): one row per score with the optional
+     * answer/explanation dimensions when an evaluator fills them.
+     */
+    private static void printEvaluationRows(List<com.agentlens.core.EvaluationResult> results) {
+        results.forEach(r -> {
+            System.out.printf("    %-18s passed=%-5s score=%.2f %s%n",
+                    r.evaluator(), r.passed(), r.score(), r.reason());
+            if (r.answer() != null) System.out.println("      answer: " + r.answer());
+            if (r.explanation() != null) System.out.println("      why: " + r.explanation());
+        });
     }
 
     /** Structured logger (active only with --log-json); request id always present. */
