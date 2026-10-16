@@ -42,7 +42,7 @@ jobs:
         run: mvn --batch-mode clean install
 
       - name: CLI demo (smoke)
-        run: java -cp "agentlens-cli/target/classes:agentlens-eval/target/classes:agentlens-adapters/target/classes:agentlens-core/target/classes" com.agentlens.cli.AgentLensApp demo
+        run: mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp -Dexec.args="demo"
 
       - name: CLI run (20 scenarios, pass^k, 5 repeats)
         run: |
