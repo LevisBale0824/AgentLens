@@ -99,6 +99,8 @@ public final class DashboardServer implements AutoCloseable {
         server.createContext("/", exchange -> respond(exchange, 200, "text/html; charset=utf-8", INDEX_HTML));
         server.createContext("/api/summary", exchange ->
                 respondJson(exchange, 200, summary()));
+        server.createContext("/api/costs", exchange ->
+                respondJson(exchange, 200, costs()));
         server.createContext("/api/runs", exchange -> {
             String path = exchange.getRequestURI().getPath();
             if (path.equals("/api/runs")) {
@@ -517,6 +519,50 @@ public final class DashboardServer implements AutoCloseable {
         return out;
     }
 
+    /**
+     * P1 成本时间序列: per-agent-version p50/p95 duration and token usage
+     * across every stored run - the version is the point on the timeline.
+     */
+    public List<Map<String, Object>> costs() throws IOException {
+        var byVersion = new LinkedHashMap<String,
+                List<Map.Entry<AgentRun, Optional<com.agentlens.core.EvaluationRun>>>>();
+        for (var entry : allEntries()) {
+            String version = entry.getValue()
+                    .map(com.agentlens.core.EvaluationRun::agentVersion)
+                    .filter(v -> v != null && !v.isBlank())
+                    .orElse("unknown");
+            byVersion.computeIfAbsent(version, v -> new ArrayList<>()).add(entry);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        byVersion.forEach((version, entries) -> {
+            List<Long> durations = entries.stream().map(e -> e.getKey().durationMs())
+                    .sorted().toList();
+            List<Long> tokens = entries.stream().map(e -> (long) e.getKey().totalTokens())
+                    .sorted().toList();
+            long passed = entries.stream().filter(e -> passed(e.getValue())).count();
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("version", version);
+            row.put("runs", entries.size());
+            row.put("passRate", (double) passed / entries.size());
+            row.put("durationMs", Map.of(
+                    "p50", percentile(durations, 50),
+                    "p95", percentile(durations, 95)));
+            row.put("tokens", Map.of(
+                    "p50", percentile(tokens, 50),
+                    "p95", percentile(tokens, 95),
+                    "total", tokens.stream().mapToLong(Long::longValue).sum()));
+            out.add(row);
+        });
+        return out;
+    }
+
+    /** Nearest-rank percentile over a pre-sorted list (empty -> 0). */
+    static long percentile(List<Long> sorted, int p) {
+        if (sorted.isEmpty()) return 0;
+        int index = (int) Math.ceil(p / 100.0 * sorted.size()) - 1;
+        return sorted.get(Math.max(0, Math.min(sorted.size() - 1, index)));
+    }
+
     public List<Map<String, Object>> scenarios() throws IOException {
         var byTask = new LinkedHashMap<String, List<Map.Entry<AgentRun,
                 Optional<com.agentlens.core.EvaluationRun>>>>();
@@ -835,6 +881,8 @@ public final class DashboardServer implements AutoCloseable {
             <main>
               <div class="cards" id="cards"></div>
               <h2>Runs trend</h2><div class="bars" id="trend"></div>
+              <h2>Cost &amp; latency by version (p50/p95)</h2>
+              <div id="costs"></div>
               <h2>Scenarios (pass^k layers)</h2>
               <table><thead><tr><th>scenario</th><th>runs</th><th>passed</th><th>pass rate</th><th>layer</th></tr></thead>
                 <tbody id="scenarios"></tbody></table>
@@ -1265,6 +1313,17 @@ public final class DashboardServer implements AutoCloseable {
                 const o = document.createElement("option"); o.textContent = v; $("version").appendChild(o);
               });
               renderTrend(RUNS); renderRuns(); loadDiff();
+              j("/api/costs").then(rows => {
+                $("costs").innerHTML = rows.length
+                  ? `<table><thead><tr><th>version</th><th>runs</th><th>pass</th><th>dur p50</th><th>dur p95</th>
+                     <th>tok p50</th><th>tok p95</th><th>tok total</th></tr></thead><tbody>` +
+                    rows.map(r => `<tr><td><b>${esc(r.version)}</b></td><td>${r.runs}</td>
+                      <td>${(r.passRate * 100).toFixed(0)}%</td>
+                      <td>${r.durationMs.p50}ms</td><td>${r.durationMs.p95}ms</td>
+                      <td>${r.tokens.p50}</td><td>${r.tokens.p95}</td><td>${r.tokens.total}</td></tr>`).join("")
+                    + `</tbody></table>`
+                  : `<div class="ev muted">no runs yet</div>`;
+              });
               j("/api/imports").then(d => {
                 $("importLog").innerHTML = (d.imports ?? []).map(r =>
                   `<tr><td class="muted">${esc(String(r.importedAt).replace("T", " ").slice(0, 19))}</td>

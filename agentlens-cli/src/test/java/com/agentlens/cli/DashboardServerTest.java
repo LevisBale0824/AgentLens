@@ -100,6 +100,62 @@ class DashboardServerTest {
         }
     }
 
+    @Test
+    void costsAggregatesPerVersionWithNearestRankPercentiles() throws Exception {
+        try (SqliteRunStore store = new SqliteRunStore(tempDir.resolve("costs.db"))) {
+            // v1: 5 runs with durations 100..500 (p50=300, p95=500), tokens 10..50
+            for (int i = 1; i <= 5; i++) {
+                AgentTask task = new AgentTask("cost-a" + i, "diagnose", Map.of(), 10);
+                AgentRun run = new MockAgentAdapter().run(task);
+                store.saveRun(new AgentRun("cost-v1-" + i, run.taskId(), run.status(),
+                        run.finalAnswer(), run.events(), run.startedAt().plusSeconds(i),
+                        100L * i, 10 * i, run.error()), "mock");
+                store.saveEvaluation(new EvaluationRun("cost-v1-" + i, run.taskId(), "mock",
+                        "v1", run.startedAt(),
+                        List.of(new EvaluationResult("task-completion", true, 1.0, "ok", Map.of())),
+                        Map.of()));
+            }
+            // v2: one failing run with slow, expensive profile
+            AgentTask task = new AgentTask("cost-b1", "diagnose", Map.of(), 10);
+            AgentRun run = new MockAgentAdapter().run(task);
+            store.saveRun(new AgentRun("cost-v2-1", run.taskId(), run.status(),
+                    run.finalAnswer(), run.events(), run.startedAt(),
+                    9000L, 9000, run.error()), "mock");
+            store.saveEvaluation(new EvaluationRun("cost-v2-1", run.taskId(), "mock",
+                    "v2", run.startedAt(),
+                    List.of(new EvaluationResult("task-completion", false, 0.0, "no", Map.of())),
+                    Map.of()));
+            try (DashboardServer server = new DashboardServer(store, 0, List.of(), null)) {
+                var costs = server.costs();
+                assertEquals(2, costs.size());
+                @SuppressWarnings("unchecked")
+                var v1 = (Map<String, Object>) costs.get(0);
+                assertEquals("v1", v1.get("version"));
+                assertEquals(5, v1.get("runs"));
+                assertEquals(1.0, v1.get("passRate"));
+                @SuppressWarnings("unchecked")
+                var v1Duration = (Map<String, Object>) v1.get("durationMs");
+                assertEquals(300L, v1Duration.get("p50"));
+                assertEquals(500L, v1Duration.get("p95"));
+                @SuppressWarnings("unchecked")
+                var v1Tokens = (Map<String, Object>) v1.get("tokens");
+                assertEquals(30L, v1Tokens.get("p50"));
+                assertEquals(50L, v1Tokens.get("p95"));
+                assertEquals(150L, v1Tokens.get("total"));
+                @SuppressWarnings("unchecked")
+                var v2 = (Map<String, Object>) costs.get(1);
+                assertEquals("v2", v2.get("version"));
+                assertEquals(0.0, v2.get("passRate"));
+                @SuppressWarnings("unchecked")
+                var v2Duration = (Map<String, Object>) v2.get("durationMs");
+                assertEquals(9000L, v2Duration.get("p50"));
+                // percentile math edge: single value and empty list
+                assertEquals(7L, DashboardServer.percentile(List.of(7L), 95));
+                assertEquals(0L, DashboardServer.percentile(List.of(), 50));
+            }
+        }
+    }
+
     private String get(String url) throws Exception {
         HttpClient client = HttpClient.newHttpClient();
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(url)).GET().build(),

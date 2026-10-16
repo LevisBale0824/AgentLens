@@ -802,6 +802,22 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   页面 JS node --check 通过。真机冒烟:标注 POST → /scores 返回
   evaluator=PASS judge=absent human=PASS sources=2 all=true。
 
+### 7.21 成本时间序列(P1 已落地)
+
+版本即时间线上的点:**每个 agentVersion 聚合全部历史 run 的延迟与 Token
+百分位**,回答"新版本变快了还是变贵了":
+
+- **API `GET /api/costs`**:按 agentVersion 分组(无版本的 run 归入
+  "unknown"),每组 {runs, passRate, durationMs:{p50,p95},
+  tokens:{p50,p95,total}}——百分位用最近秩法(nearest-rank),
+  `DashboardServer.percentile` 纯函数可测。
+- **看板**:首页新增 "Cost & latency by version (p50/p95)" 表
+  (version/runs/pass/dur p50/p95/tok p50/p95/tok total),位于 Runs trend 之下。
+- **测试**:+1 聚合测试(双版本、5 run 百分位数学 p50=300/p95=500、
+  tokens 总和、失败版本 passRate=0、单值/空表边界);页面 JS node --check。
+  真机冒烟:真实历史库 5 个版本序列完整输出(dev 1029 runs p95=71ms、
+  imported 62s、candidate p95=29.4s 等)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

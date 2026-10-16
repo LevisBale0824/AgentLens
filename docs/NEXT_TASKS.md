@@ -291,6 +291,9 @@ P2 LLM Judge / Web UI / 外部集成
   **分数三来源模型已落地（2026-10-15）**：评测器/judge/人工统一挂 run——
   `/api/runs/{id}/scores` + 看板 Scores by source 卡片 + show 汇总行 +
   跨来源一致性判定（ROADMAP 7.20）。
+  **p50/p95 成本时间序列已落地（2026-10-15）**：`GET /api/costs` 按版本聚合
+  延迟/Token 百分位（最近秩法）+ 看板 Cost & latency by version 表
+  （ROADMAP 7.21）。**借鉴清单 P1 剩余项全部完成。**
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。
