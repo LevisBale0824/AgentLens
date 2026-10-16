@@ -93,6 +93,8 @@ AgentLensApp scores --reduce PATH [--at-least M]           # 从工件重算指�
 # 语料扩充（P1-C）：Cloud-OpsBench 754 个真实 K8s 根因分析案例导入（快照重放、免活集群）
 AgentLensApp opsbench-import --root <Cloud-OpsBench检出目录> --out data/scenarios/opsbench.json [--limit N]
 
+# 场景 success_assertions 支持断言代数：纯文本=须包含；not-x=不得包含；w2:x=权重；2-of: a | b = 至少满足 2 个
+
 # 冒烟测试
 AgentLensApp demo
 

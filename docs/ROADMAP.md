@@ -738,6 +738,28 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   ScenarioLoader 全部可加载;5 案例切片 `run --scenarios` 端到端
   (runs=5 failures=0,pass^k=1.0,门禁 exit 0)。
 
+### 7.18 断言代数(P1 已落地)
+
+`success_assertions` 从"纯文档声明"升级为**可执行的确定性评测语义**
+(新 `SuccessAssertionEvaluator`,注册进 run / dsh compare / 两侧 compare 的
+评测链——mock 与 dsh 路径全覆盖):
+
+- **DSL**(单字符串、向后兼容;纯文本仍表示"答案须包含"):
+  - `not-<text>`:反转——答案**不得**包含该文本(大小写不敏感);
+  - `w<N>:<text>`(N=1..9):单条权重,构成部分得分 Σw·sat/Σw;
+  - `<k>-of: a | b | c`:assert-set——至少 k 个备选出现(备选为纯字面量);
+  - 组合:`w2:not-x`、`not-2-of: panic | oom`(答案不得同时给出 ≥k 个特征)。
+- **语义**:passed = 全部断言满足;score = 加权通过比(0..1,进 evidence);
+  解析严格——坏 spec **评测失败**而非静默忽略(语料缺陷必须响亮失败);
+  无断言场景短路为 pass"not declared",零改变既有语料行为。
+- **接线**:`Scenario.toTask()` 携带 successAssertions 进 context
+  (仅声明时放入);754 案例 Cloud-OpsBench 语料的断言从此真跑。
+- **测试**:+6 DSL 解析/求值(反转、权重、k-of-n、组合、坏 spec、空安全)
+  +5 评测器(声明求值、部分得分证据、短路、坏 spec 响亮失败、toTask 携带);
+  SpotBugs 嵌套 record 同族豁免登记(与 ApprovedBaseline$Baseline 同型)。
+  真机冒烟:带代数断言的场景 2 例——通过例门禁 exit 0;含不可能断言
+  `w3:quota exceeded` 例 STABLE_FAIL、pass^k=0.5、门禁拦截。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

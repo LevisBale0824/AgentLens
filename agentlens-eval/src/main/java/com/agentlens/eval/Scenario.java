@@ -69,6 +69,9 @@ public record Scenario(String id, String domain, String alert, List<String> symp
         context.put("allowedTools", allowedTools);
         context.put("forbiddenTools", forbiddenTools);
         context.put("agentBehavior", agentBehavior);
+        // P1 断言代数: only carry the key when declared - keeps contexts of
+        // assertion-less corpora unchanged while making assertions executable.
+        if (!successAssertions.isEmpty()) context.put("successAssertions", successAssertions);
         if (workdir != null) context.put("workdir", workdir);
         if (compliance != null) {
             context.put("compliance", compliance);

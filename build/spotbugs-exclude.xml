@@ -20,6 +20,12 @@
     caseOutcomes map is defensively copied in the compact constructor (fresh
     TreeMap + List.copyOf per value), so accessors hand out unmodifiable data.
     SpotBugs does not track the copies through the Collectors.toMap pipeline.
+
+  - SuccessAssertions$Assertion / $Result EI_EXPOSE_REP: same nested-record
+    family as ApprovedBaseline$Baseline. alternatives / outcomes are built via
+    List.copyOf at every construction site in SuccessAssertions (parse,
+    evaluate), so accessors return immutable data; the detector does not track
+    copies through nested record canonical constructors.
 -->
 <FindBugsFilter>
   <Match>
@@ -33,5 +39,13 @@
   <Match>
     <Class name="com.agentlens.eval.ScoreRecord"/>
     <Bug pattern="EI_EXPOSE_REP"/>
+  </Match>
+  <Match>
+    <Class name="com.agentlens.eval.SuccessAssertions$Assertion"/>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+  </Match>
+  <Match>
+    <Class name="com.agentlens.eval.SuccessAssertions$Result"/>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
   </Match>
 </FindBugsFilter>

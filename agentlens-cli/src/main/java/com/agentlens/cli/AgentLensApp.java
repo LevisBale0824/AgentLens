@@ -15,6 +15,7 @@ import com.agentlens.eval.RegressionGate;
 import com.agentlens.eval.RunLimitEvaluator;
 import com.agentlens.eval.Scenario;
 import com.agentlens.eval.ScenarioLoader;
+import com.agentlens.eval.SuccessAssertionEvaluator;
 import com.agentlens.eval.TaskCompletionEvaluator;
 import com.agentlens.eval.ToolPolicyEvaluator;
 
@@ -306,7 +307,8 @@ public final class AgentLensApp {
                 .register(new TaskCompletionEvaluator())
                 .register(new RunLimitEvaluator())
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
-                .register(new ComplianceEvaluator());
+                .register(new ComplianceEvaluator())
+                .register(new SuccessAssertionEvaluator());
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         if (opts.containsKey("deepeval")) registry.register(deepEvalEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
@@ -642,7 +644,8 @@ public final class AgentLensApp {
                 .register(new TaskCompletionEvaluator())
                 .register(new RunLimitEvaluator())
                 .register(new ToolPolicyEvaluator(extraAllowed, extraForbidden))
-                .register(new ComplianceEvaluator());
+                .register(new ComplianceEvaluator())
+                .register(new SuccessAssertionEvaluator());
         if (opts.containsKey("judge")) evaluators.register(judgeEvaluator(opts));
         if (opts.containsKey("deepeval")) evaluators.register(deepEvalEvaluator(opts));
         var runner = withOtel(withSqlite(new ExperimentRunner(adapter, evaluators,
@@ -1018,7 +1021,8 @@ public final class AgentLensApp {
                 .register(new TaskCompletionEvaluator())
                 .register(new RunLimitEvaluator())
                 .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
-                .register(new ComplianceEvaluator());
+                .register(new ComplianceEvaluator())
+                .register(new SuccessAssertionEvaluator());
         if (opts.containsKey("judge")) registry.register(judgeEvaluator(opts));
         if (opts.containsKey("deepeval")) registry.register(deepEvalEvaluator(opts));
         var diagnosis = new com.agentlens.eval.DiagnosisEngine();
@@ -1071,7 +1075,8 @@ public final class AgentLensApp {
                         .register(new TaskCompletionEvaluator())
                         .register(new RunLimitEvaluator())
                         .register(new ToolPolicyEvaluator(Set.of(), Set.of()))
-                        .register(new ComplianceEvaluator()),
+                        .register(new ComplianceEvaluator())
+                        .register(new SuccessAssertionEvaluator()),
                 new com.agentlens.eval.JsonlRunStore(Path.of("output/runs.jsonl")), 4)
                 .withAgentVersion("mock-" + behavior),
                 opts.getOrDefault("db", DEFAULT_DB)), opts);
