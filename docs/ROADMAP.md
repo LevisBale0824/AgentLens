@@ -831,6 +831,25 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   与 compliance "未声明=不可验证"哲学一致。+2 测试(空白名单通过、
   空白名单下 forbidden 仍拦截);demo 输出恢复 `passed=true`。
 
+### 7.23 修复:断言代数接入 run 路径后的冒烟语料与 CI 门禁期望(2026-10-16)
+
+7.18 让 `success_assertions` 变成可执行检查后,ops 冒烟语料的**语义标签式
+声明**(`identify_root_cause`)被当字面子串去匹配 mock 的自然语言答案
+——19 个 correct 场景全灭(`avgPassRate=0.000`),CI run 步骤又用旧退出码
+期望(`|| test $? -eq 1`)拦截了按契约属于 quality regression 的 exit 100:
+
+- **匹配规范化**:`SuccessAssertions` 匹配前对两侧做 identifier 归一
+  (小写、`_`/`-` 视作空格、折叠空白)——语料可用 snake_case 声明对抗
+  prose 答案;contains 仍保持语序敏感,`not-` 负向跨规范化照常工作。+1 测试。
+- **语料字面化**:ops-scenarios.json 20 场景的断言改写为 mock 可判别的
+  可执行形态 `["root cause identified", "w2:evidence", "not-<forbidden0>"]`
+  (正向短语按答案语序、权重演示、复用各场景 forbidden 工具做负向检查)。
+  修复后 19 STABLE_PASS + 1 STABLE_FAIL(wrong_tool 按设计失败),
+  `pass^k=0.950`,门禁 exit 100 = 预期 quality regression。
+- **CI 期望对齐契约**:`run` 与 `compare flaky` 两处 `|| test $? -eq 1`
+  改为 `-eq 100`(0=pass, 100=quality regression, 1=tool error, 2=config
+  error)——冒烟语料故意包含失败行为,门禁回归是预期结果而非步骤失败。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

@@ -46,12 +46,14 @@ jobs:
 
       - name: CLI run (20 scenarios, pass^k, 5 repeats)
         run: |
+          # the ops suite intentionally contains failing behaviors, so the run
+          # ends in a gate regression - contract exit code is 100, not an error
           mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
-            -Dexec.args="run --scenarios data/scenarios/ops-scenarios.json --repeats 5" || test $? -eq 1
+            -Dexec.args="run --scenarios data/scenarios/ops-scenarios.json --repeats 5" || test $? -eq 100
           mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
             -Dexec.args="compare --baseline correct --candidate correct --repeats 5"
           mvn -q -pl agentlens-cli exec:java -Dexec.mainClass=com.agentlens.cli.AgentLensApp \
-            -Dexec.args="compare --baseline correct --candidate flaky --repeats 5" || test $? -eq 1
+            -Dexec.args="compare --baseline correct --candidate flaky --repeats 5" || test $? -eq 100
 
       - name: CLI show (SQLite restore by run id)
         run: |

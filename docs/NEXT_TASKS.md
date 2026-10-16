@@ -296,6 +296,9 @@ P2 LLM Judge / Web UI / 外部集成
   （ROADMAP 7.21）。**借鉴清单 P1 剩余项全部完成。**
   **CI demo 冒烟修复（2026-10-16）**：demo 步骤改 exec:java（链接期验证需
   完整 adapter classpath）+ tool-policy 空白名单语义修正（ROADMAP 7.22）。
+  **run 冒烟修复（2026-10-16）**：success_assertions 匹配 identifier 归一 +
+  ops 语料断言字面化（19 PASS/1 按设计 FAIL, pass^k=0.95）+ CI 门禁期望
+  对齐 exit 100 契约（ROADMAP 7.23）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。
