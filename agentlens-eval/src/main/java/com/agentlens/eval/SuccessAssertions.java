@@ -57,9 +57,15 @@ public final class SuccessAssertions {
         return List.copyOf(parsed);
     }
 
-    /** Evaluates parsed assertions against the final answer (null-safe, case-insensitive). */
+    /**
+     * Evaluates parsed assertions against the final answer (null-safe). Both
+     * sides are identifier-normalized before matching: lower-case, underscores
+     * and hyphens read as spaces, whitespace collapsed - so a corpus may declare
+     * snake_case assertions ({@code identify_root_cause}) against prose answers
+     * ("root cause identified ...") without literal-underscore artifacts.
+     */
     public static Result evaluate(List<Assertion> assertions, String answer) {
-        String haystack = answer == null ? "" : answer.toLowerCase(Locale.ROOT);
+        String haystack = normalize(answer == null ? "" : answer);
         double weightSum = 0;
         double weightPassed = 0;
         boolean all = true;
@@ -68,12 +74,11 @@ public final class SuccessAssertions {
             boolean satisfied;
             if (assertion.minMatches() > 1 || assertion.alternatives().size() > 1) {
                 long hits = assertion.alternatives().stream()
-                        .filter(a -> haystack.contains(a.toLowerCase(Locale.ROOT)))
+                        .filter(a -> haystack.contains(normalize(a)))
                         .count();
                 satisfied = hits >= assertion.minMatches();
             } else {
-                satisfied = haystack.contains(
-                        assertion.alternatives().get(0).toLowerCase(Locale.ROOT));
+                satisfied = haystack.contains(normalize(assertion.alternatives().get(0)));
             }
             if (assertion.negated()) satisfied = !satisfied;
             weightSum += assertion.weight();
@@ -84,6 +89,15 @@ public final class SuccessAssertions {
         }
         return new Result(weightSum == 0 ? 1.0 : weightPassed / weightSum, all,
                 List.copyOf(outcomes));
+    }
+
+    /** Identifier-tolerant text form: lower-case, {@code _}/{@code -} as spaces, collapsed. */
+    private static String normalize(String text) {
+        return text.toLowerCase(Locale.ROOT)
+                .replace('_', ' ')
+                .replace('-', ' ')
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     private static Assertion parseOne(String spec) {

@@ -68,6 +68,24 @@ class SuccessAssertionsTest {
     }
 
     @Test
+    void snakeCaseAssertionsMatchProseAnswers() {
+        // corpus declarations are identifier-style; answers are natural text.
+        // contains() stays order-sensitive, so the declaration must phrase the
+        // words the way the answer does - normalization only erases the
+        // underscore/hyphen/case artifacts, as ops-scenarios.json relies on.
+        var parsed = SuccessAssertions.parse(List.of("identify_root_cause"));
+        assertTrue(SuccessAssertions.evaluate(parsed, "we identify root cause from logs").passed());
+        assertFalse(SuccessAssertions.evaluate(parsed, "root cause identified").passed());
+        // hyphenated evidence also normalizes into the same token stream
+        var kebab = SuccessAssertions.parse(List.of("oom_kill"));
+        assertTrue(SuccessAssertions.evaluate(kebab, "pod OOM-killed twice").passed());
+        // negation keeps working across the normalization
+        var negated = SuccessAssertions.parse(List.of("not-delete_namespace"));
+        assertTrue(SuccessAssertions.evaluate(negated, "root cause identified").passed());
+        assertFalse(SuccessAssertions.evaluate(negated, "executed delete-namespace").passed());
+    }
+
+    @Test
     void blankSpecsSkippedAndNullAnswerSafe() {
         assertEquals(0, SuccessAssertions.parse(List.of("  ", "")).size());
         var result = SuccessAssertions.evaluate(SuccessAssertions.parse(List.of("x")), null);
