@@ -107,6 +107,12 @@ public final class DashboardServer implements AutoCloseable {
                 String id = path.substring("/api/runs/".length(),
                         path.length() - "/annotate".length());
                 annotate(exchange, id);
+            } else if (path.startsWith("/api/runs/") && path.endsWith("/scores")) {
+                String id = path.substring("/api/runs/".length(),
+                        path.length() - "/scores".length());
+                var scores = runScores(id);
+                respondJson(exchange, scores == null ? 404 : 200, scores == null
+                        ? Map.of("error", "run not found: " + id) : scores);
             } else if (path.startsWith("/api/runs/")) {
                 String id = path.substring("/api/runs/".length());
                 var detail = runDetail(id);
@@ -303,6 +309,52 @@ public final class DashboardServer implements AutoCloseable {
     }
 
     /** M3: human review verdict for one run (upsert). */
+    /**
+     * P1 分数三来源: evaluator (deterministic), judge (LLM) and human
+     * (annotation) scores uniformly attached to one run, plus an agreement
+     * verdict across every source that is actually present.
+     */
+    public Map<String, Object> runScores(String runId) throws IOException {
+        var entryOpt = allEntries().stream().filter(e -> e.getKey().runId().equals(runId)).findFirst();
+        if (entryOpt.isEmpty()) return null;
+        List<EvaluationResult> results = entryOpt.get().getValue()
+                .map(com.agentlens.core.EvaluationRun::results).orElse(List.of());
+        List<Map<String, Object>> evaluatorRows = new ArrayList<>();
+        List<Map<String, Object>> judgeRows = new ArrayList<>();
+        for (EvaluationResult r : results) {
+            (r.evaluator().startsWith("llm-judge") ? judgeRows : evaluatorRows)
+                    .add(resultMap(r));
+        }
+        Boolean judgePassed = judgeRows.isEmpty() ? null
+                : judgeRows.stream().allMatch(row -> Boolean.TRUE.equals(row.get("passed")));
+        boolean evaluatorPassed = !evaluatorRows.isEmpty() && evaluatorRows.stream()
+                .allMatch(row -> Boolean.TRUE.equals(row.get("passed")));
+        var annotation = store.loadAnnotation(runId).orElse(null);
+        Map<String, Object> human = null;
+        if (annotation != null) {
+            human = annotationMap(annotation);
+        }
+        List<Boolean> present = new ArrayList<>();
+        present.add(evaluatorPassed);
+        if (judgePassed != null) present.add(judgePassed);
+        if (annotation != null) present.add(annotation.passed());
+        boolean allAgree = present.stream().allMatch(Boolean::booleanValue);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("runId", runId);
+        out.put("evaluator", Map.of("passed", evaluatorPassed, "results", evaluatorRows));
+        Map<String, Object> judge = new LinkedHashMap<>();
+        judge.put("passed", judgePassed);
+        judge.put("results", judgeRows);
+        out.put("judge", judge);
+        out.put("human", human);
+        out.put("agreement", Map.of(
+                "all", allAgree,
+                "sources", present.size(),
+                "disagree", present.size() > 1 && !allAgree));
+        return out;
+    }
+
     private void annotate(HttpExchange exchange, String runId) throws IOException {
         if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
             respondJson(exchange, 405, Map.of("error",
@@ -948,6 +1000,23 @@ public final class DashboardServer implements AutoCloseable {
                     (x.answer ? `<div class="ev muted">answer: ${esc(x.answer)}</div>` : "") +
                     (x.explanation ? `<div class="ev muted">why: ${esc(x.explanation)}</div>` : "")).join("");
               }
+              j("/api/runs/" + id + "/scores").then(s => {
+                const src = (label, p) =>
+                  `<div class="ev"><b>${label}</b> ` + (p === null || p === undefined
+                    ? `<span class="muted">absent</span>`
+                    : (p ? pill("PASS", "ok") : pill("FAIL", "bad"))) + `</div>`;
+                const human = s.human
+                  ? `<div class="ev muted">${esc(s.human.note ?? "")} — by ${esc(s.human.annotatedBy ?? "-")}</div>` : "";
+                const agree = s.agreement.all
+                  ? pill(s.agreement.sources + " sources agree", "ok")
+                  : pill("SOURCES DISAGREE", "bad");
+                const wrap = document.createElement("div");
+                wrap.innerHTML = `<h2>Scores by source ${agree}</h2>` +
+                  src("evaluator", s.evaluator.passed) +
+                  src("judge", s.judge.passed) +
+                  src("human", s.human ? s.human.passed : null) + human;
+                el.appendChild(wrap);
+              });
               html += `<h2>Diagnoses (${d.diagnoses.length})</h2>` + (d.diagnoses.length === 0
                 ? `<div class="ev muted">none</div>`
                 : d.diagnoses.map(x =>

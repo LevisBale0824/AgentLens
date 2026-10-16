@@ -783,6 +783,25 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   到位(success-assertions why = "PASS root cause; PASS not-crashloop;
   FAIL w3:quota exceeded")。
 
+### 7.20 分数三来源模型(P1 已落地)
+
+评测器(确定性)/ judge(LLM)/ 人工(标注)三种分数**统一挂到同一 run**,
+并给出跨来源一致性判定——三类信号不再各说各话:
+
+- **API `GET /api/runs/{id}/scores`**:`{evaluator, judge, human, agreement}`
+  ——evaluator=全部非 judge 结果行;judge=全部 `llm-judge*` 结果行
+  (缺席时 passed=null);human=M3 标注(缺席 null);agreement=
+  {all, sources, disagree}——只统计**实际在场**的来源,sources=1 时不报 disagree。
+- **看板**:runDetail 新增 "Scores by source" 卡片——三来源 PASS/FAIL/absent
+  胶囊 + 一致性徽章("N sources agree" / "SOURCES DISAGREE")+ 人工备注;
+  与既有 human review、annotation 徽章互补。
+- **CLI**:`show --run` 评测行后追加
+  `scores by source: evaluator=X judge=Y human=Z` 汇总行(absent 标注缺席)。
+- **测试**:+2 端点测试(评测器+judge+人工三源在场全一致 sources=3;人工
+  反转 + judge 缺席 → disagree、passed=null 传播、未知 run 返回 null/404);
+  页面 JS node --check 通过。真机冒烟:标注 POST → /scores 返回
+  evaluator=PASS judge=absent human=PASS sources=2 all=true。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

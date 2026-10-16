@@ -48,6 +48,58 @@ class DashboardServerTest {
         return store;
     }
 
+    @Test
+    void scoresEndpointGroupsEvaluatorJudgeHumanAndAgrees() throws Exception {
+        try (SqliteRunStore store = storeWithOneRun(tempDir.resolve("scores.db"))) {
+            // one evaluation row carrying BOTH sources (evaluator + judge); the
+            // evaluations table upserts by run id, so it must be a single save
+            store.saveEvaluation(new EvaluationRun(RUN_ID, "dash-task", "mock", "baseline",
+                    java.time.Instant.now(),
+                    List.of(new EvaluationResult("task-completion", true, 1.0, "completed", Map.of()),
+                            new EvaluationResult("llm-judge", true, 0.9, "good answer", Map.of())),
+                    Map.of()));
+            store.saveAnnotation(new SqliteRunStore.Annotation(RUN_ID, true, "verified", "alice", null));
+            try (DashboardServer server = new DashboardServer(store, 0, List.of(), null)) {
+                var scores = server.runScores(RUN_ID);
+                @SuppressWarnings("unchecked")
+                var judge = (Map<String, Object>) scores.get("judge");
+                assertEquals(Boolean.TRUE, judge.get("passed"));
+                assertEquals(1, ((List<?>) judge.get("results")).size());
+                @SuppressWarnings("unchecked")
+                var human = (Map<String, Object>) scores.get("human");
+                assertEquals(Boolean.TRUE, human.get("passed"));
+                assertEquals("alice", human.get("annotatedBy"));
+                @SuppressWarnings("unchecked")
+                var agreement = (Map<String, Object>) scores.get("agreement");
+                assertEquals(3, agreement.get("sources"));
+                assertEquals(Boolean.TRUE, agreement.get("all"));
+                assertEquals(Boolean.FALSE, agreement.get("disagree"));
+            }
+        }
+    }
+
+    @Test
+    void scoresEndpointFlagsDisagreementAndAbsentSources() throws Exception {
+        try (SqliteRunStore store = storeWithOneRun(tempDir.resolve("scores2.db"))) {
+            // deterministic evaluators say PASS, human says FAIL, judge absent
+            store.saveAnnotation(new SqliteRunStore.Annotation(RUN_ID, false, "wrong cause", "bob", null));
+            try (DashboardServer server = new DashboardServer(store, 0, List.of(), null)) {
+                var scores = server.runScores(RUN_ID);
+                @SuppressWarnings("unchecked")
+                var judge = (Map<String, Object>) scores.get("judge");
+                assertEquals(null, judge.get("passed"));
+                assertEquals(0, ((List<?>) judge.get("results")).size());
+                @SuppressWarnings("unchecked")
+                var agreement = (Map<String, Object>) scores.get("agreement");
+                assertEquals(2, agreement.get("sources"));
+                assertEquals(Boolean.TRUE, agreement.get("disagree"));
+                assertEquals(Boolean.FALSE, agreement.get("all"));
+                // unknown run -> null (rendered as 404 by the HTTP layer)
+                assertEquals(null, server.runScores("no-such-run"));
+            }
+        }
+    }
+
     private String get(String url) throws Exception {
         HttpClient client = HttpClient.newHttpClient();
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(URI.create(url)).GET().build(),

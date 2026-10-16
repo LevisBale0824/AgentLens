@@ -397,6 +397,24 @@ public final class AgentLensApp {
             sqlite.loadEvaluation(runId).ifPresentOrElse(ev -> {
                 System.out.println("  evaluation:");
                 printEvaluationRows(ev.results());
+                boolean evaluator = ev.results().stream()
+                        .filter(r -> !r.evaluator().startsWith("llm-judge"))
+                        .allMatch(com.agentlens.core.EvaluationResult::passed);
+                var judge = ev.results().stream()
+                        .filter(r -> r.evaluator().startsWith("llm-judge"))
+                        .toList();
+                com.agentlens.eval.SqliteRunStore.Annotation annotation;
+                try {
+                    annotation = sqlite.loadAnnotation(runId).orElse(null);
+                } catch (java.io.IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                System.out.printf("  scores by source: evaluator=%s judge=%s human=%s%n",
+                        evaluator ? "PASS" : "FAIL",
+                        judge.isEmpty() ? "absent"
+                                : judge.stream().allMatch(com.agentlens.core.EvaluationResult::passed)
+                                ? "PASS" : "FAIL",
+                        annotation == null ? "absent" : annotation.passed() ? "PASS" : "FAIL");
                 if (!ev.metadata().isEmpty()) {
                     System.out.println("  metadata:");
                     ev.metadata().forEach((k, v) -> System.out.printf("    %-16s %s%n", k, v));
