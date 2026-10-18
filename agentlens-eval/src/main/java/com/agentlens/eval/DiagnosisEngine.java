@@ -13,6 +13,7 @@ import com.agentlens.core.ToolRepeatDetector;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Rule-based diagnosis engine (ROADMAP P1-4). Answers "why did it fail" by
@@ -25,16 +26,39 @@ import java.util.Map;
  */
 public final class DiagnosisEngine {
 
+    /** Rule names usable with {@link #DiagnosisEngine(Set)} for ablation studies. */
+    public static final Set<String> RULE_NAMES = Set.of(
+            "forbiddenToolCalls", "unknownToolCalls", "repeatedToolCalls",
+            "stepLimitExceeded", "errorEvents", "timeout", "unsuccessfulRun");
+
+    private final Set<String> disabledRules;
+
+    /** All rules enabled (production default). */
+    public DiagnosisEngine() {
+        this(Set.of());
+    }
+
+    /** Ablation constructor: skips the named rules (see {@link #RULE_NAMES}). */
+    public DiagnosisEngine(Set<String> disabledRules) {
+        for (String rule : disabledRules) {
+            if (!RULE_NAMES.contains(rule)) {
+                throw new IllegalArgumentException("unknown diagnosis rule: " + rule
+                        + " (available: " + RULE_NAMES + ")");
+            }
+        }
+        this.disabledRules = Set.copyOf(disabledRules);
+    }
+
     public List<Diagnosis> diagnose(AgentTask task, AgentRun run, List<EvaluationResult> results) {
         Rules rules = new Rules(task, run);
         List<Diagnosis> out = new ArrayList<>();
-        out.addAll(rules.forbiddenToolCalls());
-        out.addAll(rules.unknownToolCalls());
-        out.addAll(rules.repeatedToolCalls());
-        out.addAll(rules.stepLimitExceeded());
-        out.addAll(rules.errorEvents());
-        out.addAll(rules.timeout());
-        out.addAll(rules.unsuccessfulRun());
+        if (!disabledRules.contains("forbiddenToolCalls")) out.addAll(rules.forbiddenToolCalls());
+        if (!disabledRules.contains("unknownToolCalls")) out.addAll(rules.unknownToolCalls());
+        if (!disabledRules.contains("repeatedToolCalls")) out.addAll(rules.repeatedToolCalls());
+        if (!disabledRules.contains("stepLimitExceeded")) out.addAll(rules.stepLimitExceeded());
+        if (!disabledRules.contains("errorEvents")) out.addAll(rules.errorEvents());
+        if (!disabledRules.contains("timeout")) out.addAll(rules.timeout());
+        if (!disabledRules.contains("unsuccessfulRun")) out.addAll(rules.unsuccessfulRun());
         return List.copyOf(out);
     }
 

@@ -151,18 +151,22 @@
 > 以下每个实验都能产出真实的 before/after 数字，且互为证据（A2/A3 的翻车就是 C7 要
 > 自动拦截的对象）。
 
-### C1. 诊断引擎标定（`diagnose-calibrate`）——构造即真值
+### C1. 诊断引擎标定（`diagnose-calibrate`）——构造即真值 ✅ 已完成（2026-10-18）
 
-- **设计**：mock 每种失败行为（loop / wrong_tool / forbidden_action / cheat_tamper /
-  cheat_hardcode / wrong_conclusion…）在生成时就携带"预期诊断"标签（loop → 重复调用·无进展；
-  wrong_tool → tool_selection 层…）。新命令跑全行为语料 × 诊断引擎，输出混淆矩阵与
-  per-class precision/recall/F1（复用 `JudgeCalibration` 统计骨架）。
-- **验证方式**：全量对角线；再逐条**消融**——禁用单条规则（如 callId 配对）看对应
-  类目 recall 掉多少，证明每条规则都在贡献。
-- **待采集数字**：整体 accuracy、三分类 per-class P/R/F1、消融 delta、事件乱序与
-  时间戳扰动下的诊断稳定率。
-- **面试叙事点**：标签免费（确定性生成）；诊断规则不是"写了就信"，有混淆矩阵和
-  消融实验背书。
+- **设计**：mock 每种失败行为在生成时就携带"预期诊断"标签。新命令跑 11 case 确定性
+  语料 × 诊断引擎，输出混淆矩阵与 per-layer P/R/F1（`DiagnosisCalibration`，CLI 模块；
+  eval 保持 adapter-free）；`--disable-rule A,B` 支持单规则消融（`DiagnosisEngine(Set)`）。
+- **实测数字（首跑）**：11/11 全对、0 假阳性、四层 P=R=1.000；消融禁用
+  unknownToolCalls+forbiddenToolCalls → 精确 4 个 MISS（7/11）且零假阳性——
+  **每条规则的贡献第一次变成可量化数字**。
+- **抓到的真实缺陷**：`giveUp()` 实现存在但未接进行为 switch——`agentBehavior:
+  give_up` 静默落 default 生成 correct trace。标定首跑即抓出孤立分支并接线
+  （ROADMAP 7.24）。
+- **盲区被测量证实**：wrong_conclusion / fabricated_evidence / partial_evidence
+  零诊断；cheat_tamper / cheat_hardcode 仅 tool_selection 间接信号——"答案-证据
+  矛盾"与"篡改语义"无 trace 级规则，盲区清单成为后续规则设计的输入。
+- **面试叙事点**：标签免费（确定性生成）；"标定不是证明引擎全对，而是把盲区从
+  感觉变成数字"；首跑抓到死分支证明标定有真实检出力。
 
 ### C2. 回归门禁功效分析（gate power analysis）
 

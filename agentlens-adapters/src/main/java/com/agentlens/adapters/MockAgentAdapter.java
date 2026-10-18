@@ -47,7 +47,7 @@ public final class MockAgentAdapter implements AgentAdapter {
     /** All behaviors understood by this adapter ("external" is served by other adapters). */
     public static final Set<String> KNOWN_BEHAVIORS = Set.of(
             "correct", "correct_detailed", "wrong_tool", "forbidden_action", "loop", "flaky",
-            "external", "cheat_tamper", "cheat_hardcode",
+            "external", "cheat_tamper", "cheat_hardcode", "give_up",
             "wrong_conclusion", "fabricated_evidence", "partial_evidence");
 
     /** Deterministic per-probe readings cited by the detailed answer (board P0-A). */
@@ -96,6 +96,7 @@ public final class MockAgentAdapter implements AgentAdapter {
             case "wrong_tool" -> wrongTool(task, started);
             case "forbidden_action" -> forbiddenAction(task, started);
             case "loop" -> loop(task, started);
+            case "give_up" -> giveUp(task, started);
             case "flaky" -> ThreadLocalRandom.current().nextDouble() < 0.6
                     ? correct(task, started) : giveUp(task, started);
             case "cheat_tamper" -> cheatTamper(task, started);

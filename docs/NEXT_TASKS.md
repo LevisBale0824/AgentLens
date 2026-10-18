@@ -305,6 +305,10 @@ P2 LLM Judge / Web UI / 外部集成
   计划：docs/reports/credibility-engineering-plan.md；数字回填
   docs/reports/interview-cases.md。显式延期：多轮评测、MCP server、
   Spring Starter（阶段三独立立项）。
+  **S1 已完成（2026-10-18）**：`diagnose-calibrate` 构造即真值标定 11/11、
+  0 假阳性、四层 P/R=1.000；消融精确 4 MISS；首跑抓出 give_up 孤立分支
+  并接线；答案层盲区（wrong_conclusion/fabricated/partial 零诊断）被测量
+  证实（ROADMAP 7.24）。下一子任务：S2 数学验证件套（C3+C4）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。

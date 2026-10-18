@@ -463,6 +463,7 @@ public final class AgentLensApp {
                 case "demo" -> demo(opts);
                 case "serve" -> serve(opts);
                 case "judge-calibrate" -> judgeCalibrate(opts);
+                case "diagnose-calibrate" -> diagnoseCalibrate(opts);
                 case "otel-receive" -> otelReceive(opts);
                 case "aiopslab-catalog" -> aiopslabCatalog(opts);
                 default -> {
@@ -479,7 +480,8 @@ public final class AgentLensApp {
                             + " [--scenarios-out PATH] | otel-receive [--port N]"
                             + " [--db PATH] | import --session PATH"
                             + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
-                            + " [--out PATH] | demo");
+                            + " [--out PATH] | demo"
+                            + " | diagnose-calibrate [--disable-rule A,B] [--json-out PATH]");
                     System.exit(2);
                 }
             }
@@ -586,6 +588,17 @@ public final class AgentLensApp {
                 validateJudge(opts);
             }
             case "demo", "aiopslab-catalog" -> { }
+            case "diagnose-calibrate" -> {
+                String ruleSpec = opts.get("disable-rule");
+                if (ruleSpec != null && !ruleSpec.isBlank()) {
+                    for (String rule : ruleSpec.split(",")) {
+                        if (!com.agentlens.eval.DiagnosisEngine.RULE_NAMES.contains(rule.trim())) {
+                            throw new ConfigException("unknown diagnosis rule: " + rule.trim()
+                                    + " (available: " + com.agentlens.eval.DiagnosisEngine.RULE_NAMES + ")");
+                        }
+                    }
+                }
+            }
             default -> { } // unknown command is reported by the dispatcher
         }
     }
@@ -1280,6 +1293,44 @@ public final class AgentLensApp {
      * recorded in the output. Without --corpus the legacy hardcoded behavior set
      * is used (backwards compatible).
      */
+    /**
+     * Credibility plan S1: calibration harness for the rule-based diagnosis engine.
+     * Runs the deterministic mock-behavior corpus (ground truth by construction) through
+     * the engine, prints a markdown report and optionally writes a JSON artifact.
+     * {@code --disable-rule A,B} ablates rules to measure each one's contribution.
+     */
+    private static void diagnoseCalibrate(Map<String, String> opts) throws Exception {
+        java.util.Set<String> disabled = new java.util.LinkedHashSet<>();
+        String ruleSpec = opts.get("disable-rule");
+        if (ruleSpec != null && !ruleSpec.isBlank()) {
+            for (String rule : ruleSpec.split(",")) {
+                disabled.add(rule.trim());
+            }
+        }
+        var engine = new com.agentlens.eval.DiagnosisEngine(disabled);
+        var report = DiagnosisCalibration.calibrate(
+                DiagnosisCalibration.defaultCorpus(), engine);
+        System.out.print(DiagnosisCalibration.toMarkdown(report));
+        String jsonOut = opts.get("json-out");
+        if (jsonOut != null && !jsonOut.isBlank()) {
+            Path out = Path.of(jsonOut);
+            Path parent = out.getParent();
+            if (parent != null) {
+                java.nio.file.Files.createDirectories(parent);
+            }
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writerWithDefaultPrettyPrinter().writeValue(out.toFile(), report);
+            System.out.println("artifact: " + out.toAbsolutePath());
+        }
+        if (report.falsePositives().isEmpty() && report.matchedCases() == report.totalCases()) {
+            System.out.printf("calibration result: PASS (%d/%d matched, 0 false positives)%n",
+                    report.matchedCases(), report.totalCases());
+        } else {
+            System.out.printf("calibration result: FAIL (%d/%d matched, %d false positives)%n",
+                    report.matchedCases(), report.totalCases(), report.falsePositives().size());
+        }
+    }
+
     private static void judgeCalibrate(Map<String, String> opts) throws Exception {
         int samples = requireInt(opts, "samples", 2);
         var mock = new com.agentlens.adapters.MockAgentAdapter();

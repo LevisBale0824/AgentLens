@@ -37,7 +37,7 @@
 
 ## 1. 子任务定义（提交序列 S1–S9）
 
-### S1 诊断标定 `diagnose-calibrate`（C1）
+### S1 诊断标定 `diagnose-calibrate`（C1）✅ 已完成（2026-10-18，ROADMAP 7.24）
 
 - **设计**：eval 新类 `DiagnosisCalibration`（混淆矩阵、per-rule P/R/F1、消融开关）；
   CLI 命令跑内置行为语料（12 行为 × 标签表，标签=行为→预期规则集+预期 layer，放在

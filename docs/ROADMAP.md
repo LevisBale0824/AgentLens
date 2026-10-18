@@ -850,6 +850,26 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   改为 `-eq 100`(0=pass, 100=quality regression, 1=tool error, 2=config
   error)——冒烟语料故意包含失败行为,门禁回归是预期结果而非步骤失败。
 
+### 7.24 S1 诊断引擎标定 `diagnose-calibrate`(评测可信度工程 1A,2026-10-18)
+
+- **构造即真值**:mock 行为语料 11 个确定性 case(12 行为除随机 flaky),每个行为
+  携带构造时已知的预期诊断层标签;`DiagnosisCalibration`(CLI 模块,eval 保持
+  adapter-free)对账层集合,输出 per-layer P/R/F1 + 混淆矩阵 + 假阳性清单,
+  JSON artifact 可落盘。
+- **诊断引擎消融**:`DiagnosisEngine(Set)` 消融构造器 + `RULE_NAMES` 白名单
+  (默认构造行为不变);`--disable-rule A,B` 逐规则度量贡献。
+- **标定结果(首跑)**:11/11 全对、0 假阳性、execution/final_answer/safety/
+  tool_selection 四层 P=R=1.000;消融 `--disable-rule unknownToolCalls,
+  forbiddenToolCalls` 精确命中 4 个 MISS(7/11)且零假阳性——每条规则
+  的贡献可量化。
+- **两个真实发现**:(1) `giveUp()` 实现存在但未接进行为 switch 与
+  KNOWN_BEHAVIORS——`agentBehavior: give_up` 静默落到 default 生成 correct
+  trace,标定首跑即抓出该孤立分支并接线;(2) 答案层盲区被测量证实:
+  wrong_conclusion/fabricated_evidence/partial_evidence 三个行为零诊断,
+  cheat_tamper/cheat_hardcode 仅有 tool_selection 间接信号(write 不在
+  allowed),"篡改语义"与"答案-证据矛盾"均无 trace 级规则——盲区清单
+  成为后续规则设计的输入。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化
