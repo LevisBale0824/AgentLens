@@ -299,6 +299,12 @@ P2 LLM Judge / Web UI / 外部集成
   **run 冒烟修复（2026-10-16）**：success_assertions 匹配 identifier 归一 +
   ops 语料断言字面化（19 PASS/1 按设计 FAIL, pass^k=0.95）+ CI 门禁期望
   对齐 exit 100 契约（ROADMAP 7.23）。
+  **评测可信度工程立项（2026-10-18）**：S1-S11 十一子任务分三段（1A 本地统计
+  S1-S3+S10 / 1B judge 链 S4-S7 含 3b/7b/14b/llama3.1/r1 五模型 κ 对比——解锁
+  "更大 judge 模型 κ 对比"待办 / 1C 归因与出口 S8-S9+S11 GitHub Action）。
+  计划：docs/reports/credibility-engineering-plan.md；数字回填
+  docs/reports/interview-cases.md。显式延期：多轮评测、MCP server、
+  Spring Starter（阶段三独立立项）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。

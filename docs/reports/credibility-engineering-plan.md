@@ -1,5 +1,10 @@
 # 评测可信度工程（Evaluation Credibility Engineering）——详细计划
 
+> **v2（2026-10-18）**：吸收统计深化与功能盘点后重排——S3 扩展为"统计门禁"
+> （功效分析 + bootstrap CI + McNemar 显著性）；新增 S10 成本预算评测器、
+> S11 GitHub Action 出口；组织为三段子阶段（1A 本地统计 / 1B judge 链 /
+> 1C 归因与出口）；显式延期清单单列。
+
 > 目标：把"评测结论可信"从口号变成 9 个可测量的验证 + 3 个 judge 机制升级。
 > 每个子任务的数字产出直接回填 [interview-cases.md](interview-cases.md) 的 B/C 节。
 > 节奏：按优先级切子任务，每个独立提交推送；质量门 `mvn -Pquality verify` 全绿。
@@ -53,14 +58,17 @@
   最小 k"）写进 `--repeats` 帮助与 ROADMAP。
 - **验收**：测试绿 + 表格落库。
 
-### S3 门禁功效实验（C2）
+### S3 统计门禁：功效分析 + 置信区间 + 显著性（C2 + 统计深化）
 
 - **设计**：`gate-power` 命令：参数 (p, k, tolerance, trials) → {虚警率（基线=候选
-  同分布）, 检出率（候选=p−δ）}；标准网格输出 `output/gate-power.md`。
-- **核心命题**：核实"默认 tolerance=0 → p∈(0,1) 时虚警率≈50%"；给出 tolerance 建议
-  曲线。**处置决策：不改默认契约**（兼容已批准基线与既有 CI），若 CLI 未暴露
+  同分布）, 检出率（候选=p−δ）}，标准网格输出 `output/gate-power.md`；
+  **`compare` 报告增强**——bootstrap 置信区间（重采样 10k 次）+ 配对场景
+  McNemar 检验，输出"avg pass rate 0.90→0.85, Δ=-5pp, 95% CI [-8,-2], significant"
+  式结论，替代纯点估计。
+- **核心命题**：核实"默认 tolerance=0 → p∈(0,1) 时虚警率≈50%"；给出 tolerance
+  建议曲线。**处置决策：不改默认契约**（兼容已批准基线与既有 CI），若 CLI 未暴露
   `maxPassPowKDrop` 则新增 `compare --gate-tolerance` 显式 flag 透传既有构造参数。
-- **验收**：功效表落盘；虚警率与理论值自洽；flag（如缺）+ 测试。
+- **验收**：功效表落盘；虚警率与理论值自洽；compare 输出含 CI 与显著性；测试。
 
 ### S4 `compare --review` 位置随机化（B1）
 
@@ -124,6 +132,20 @@
   按 `explanation` 字段正则命中数的时间窗对比。
 - **验证**：以 A2 为样板——修复前后窗口 `unknown=\[` 命中数对比，与逐 run 复核一致。
 
+### S10 成本预算评测器
+
+- **设计**：`cost-budget` 评测器：任务 context `maxTokens` 或 CLI `--max-tokens`
+  设定 Token 上限，超限 fail（reason 报实际/上限），与 run-limits 同族
+  （步数维度 → Token 维度补全）；消费方：N4 成本序列。
+- **验收**：+2 测试（超限 fail/未超 pass/未声明预算不适用）；接入 run 全路径。
+
+### S11 GitHub Action + PR 评论（阶段出口）
+
+- **设计**：`.github/workflows` 增加 gate 可复用步骤或 composite action 包装
+  compare/gate；PR 评论渲染器——markdown 表格（通过率、pass^k、退化场景、
+  CI 区间、趋势箭头），幂等更新（同 PR 改评论不追加）。本仓库自吃狗粮。
+- **验收**：本仓库 PR 上真实跑通一次；评论格式快照测试。
+
 ## 2. 顺序与理由
 
 ```
@@ -146,6 +168,18 @@ S4 位置随机化 ──► S5 prompt 硬化 ──► S6 votes     （judge �
 | R3 | S5 insufficient 语义影响既有聚合 | 默认关闭（`--judge-abstain`），prompt 版本区分，旧行为逐字节不变 |
 | R4 | S7 分层语料主观性 | tier 定义写进 corpus schema；每条带 rationale 字段 |
 | R5 | S1 标签表与规则实现耦合 | 标签表放测试资源 JSON，规则演进同 PR 更新（约定入文档） |
+
+## 3.5 阶段归属与显式延期（v2）
+
+- **阶段一 1A（本地统计，零 LLM 依赖）**：S1 → S2 → S3 → S10
+- **阶段一 1B（judge 机制链，需本地 Ollama）**：S4 → S5 → S6 → S7（含五模型 κ 矩阵）
+- **阶段一 1C（归因与出口）**：S8 → S9 → S11
+- **阶段二（语料与聚类）**：bfcl-import、τ-bench 政策用例、失败聚类看板视图
+  （依赖 S8 标签器）、dashboard bundle、外部基准矩阵
+- **阶段三（Java 生态卡位）**：Spring Boot Starter（Spring AI 事件 → 统一 Trace）独立立项
+- **显式延期**：多轮会话评测（数据模型大改）、MCP server（先记账）、javaagent 探针、
+  Webhook 通知（小，随需插入）
+- **雨天任务**（Ollama 不可用时替换 1B）：S9/S10 提前、SARIF/JUnit 输出
 
 ## 4. 每子任务统一验收门
 
