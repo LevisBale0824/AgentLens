@@ -99,6 +99,14 @@
 - **验证**：注入一条过拟合 rubric（只在特定样例成立），展示 gap 暴露（预期 >20pp）；
   正常 rubric gap <5pp。
 - **风险**：R4 分层定义主观——定义写进 corpus schema 文档。
+- **κ 对比矩阵（解锁 NEXT_TASKS"更大 judge 模型 κ 对比"）**：`judge-calibrate` 在
+  qwen2.5:3b / 7b / 14b + llama3.1:8b + **deepseek-r1:8b** 各跑一轮，输出
+  κ/准确率/一致率/延迟/成本五维对比表。前置检查：思考型输出兼容性——Ollama 0.40
+  将思维链放在独立 `thinking` 字段、`extractContent` 只取 `content`，需真机确认；
+  `judge-timeout-sec` 对思考模型调至 600s；注意 `OpenAiJudge` 硬编码 temperature=0.0
+  与 R1 官方建议 0.6 的错配（升温重试机制部分缓解）——若解析仍碎，修复
+  "深度计数扫描被 think 块内 `{` 锚点错位"即成为独立案例。经验问题不设先验：
+  推理型 judge 准不准，由矩阵说话。
 
 ### S8 失败归因标签器（B5 前半；聚类视图后续另立项）
 
