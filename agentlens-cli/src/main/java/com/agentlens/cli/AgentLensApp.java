@@ -467,6 +467,7 @@ public final class AgentLensApp {
                 case "serve" -> serve(opts);
                 case "judge-calibrate" -> judgeCalibrate(opts);
                 case "diagnose-calibrate" -> diagnoseCalibrate(opts);
+                case "gate-power" -> gatePower(opts);
                 case "otel-receive" -> otelReceive(opts);
                 case "aiopslab-catalog" -> aiopslabCatalog(opts);
                 default -> {
@@ -484,7 +485,10 @@ public final class AgentLensApp {
                             + " [--db PATH] | import --session PATH"
                             + " | import --aiopslab --session PATH | aiopslab-catalog [--registry PATH]"
                             + " [--out PATH] | demo"
-                            + " | diagnose-calibrate [--disable-rule A,B] [--json-out PATH]");
+                            + " | diagnose-calibrate [--disable-rule A,B] [--json-out PATH]"
+                            + " | gate-power [--p 0.9] [--k 5] [--scenarios 20] [--delta 0.05]"
+                            + " [--trials 2000] [--tolerance 0.0,0.05,0.10,0.20,0.30] [--out PATH]"
+                            + "   (compare also accepts --gate-tolerance T)");
                     System.exit(2);
                 }
             }
@@ -515,6 +519,7 @@ public final class AgentLensApp {
                 if (approved != null && !java.nio.file.Files.isRegularFile(Path.of(approved)))
                     throw new ConfigException("approved-baseline artifact not found: "
                             + Path.of(approved).toAbsolutePath());
+                gateTolerance(opts);
             }
             case "approve" -> {
                 String compare = opts.get("compare");
@@ -600,6 +605,22 @@ public final class AgentLensApp {
                                     + " (available: " + com.agentlens.eval.DiagnosisEngine.RULE_NAMES + ")");
                         }
                     }
+                }
+            }
+            case "gate-power" -> {
+                double p = Double.parseDouble(opts.getOrDefault("p", "0.9"));
+                if (p <= 0 || p >= 1) throw new ConfigException("p must be in (0,1), got: " + p);
+                double delta = Double.parseDouble(opts.getOrDefault("delta", "0.05"));
+                if (delta <= 0 || delta >= 1) throw new ConfigException("delta must be in (0,1), got: " + delta);
+                if (Integer.parseInt(opts.getOrDefault("k", "5")) < 1)
+                    throw new ConfigException("k must be >= 1");
+                if (Integer.parseInt(opts.getOrDefault("scenarios", "20")) < 1)
+                    throw new ConfigException("scenarios must be >= 1");
+                if (Integer.parseInt(opts.getOrDefault("trials", "2000")) < 100)
+                    throw new ConfigException("trials must be >= 100 for stable rates");
+                for (String t : opts.getOrDefault("tolerance", "0.0,0.05,0.10,0.20,0.30").split(",")) {
+                    double tol = Double.parseDouble(t.trim());
+                    if (tol < 0 || tol > 1) throw new ConfigException("tolerance must be in [0,1], got: " + t);
                 }
             }
             default -> { } // unknown command is reported by the dispatcher
@@ -877,9 +898,26 @@ public final class AgentLensApp {
 
         RegressionGate.GateResult gate = approved != null
                 ? ApprovedGate.check(approved, datasetSha, evaluatorNames, candSummary)
-                : new RegressionGate(List.of("tool-policy"), 0.0).compare(baseSummary, candSummary);
+                : new RegressionGate(List.of("tool-policy"), gateTolerance(opts)).compare(baseSummary, candSummary);
         System.out.printf("%nrelease gate: passed=%s%n  reason=%s%n", gate.passed(), gate.reason());
         logGate("compare", gate);
+
+        // S3 statistical honesty: paired CI + McNemar on the raw per-scenario
+        // outcomes, so a point-estimate delta comes with a noise statement.
+        if (baseOutcome != null && baseOutcome.outcomes() != null && candOutcome.outcomes() != null) {
+            var ci = com.agentlens.eval.CompareStatistics.bootstrapDeltaCi(
+                    baseOutcome.outcomes(), candOutcome.outcomes(), 10_000, 20260918L);
+            var mc = com.agentlens.eval.CompareStatistics.mcnemar(
+                    baseOutcome.outcomes(), candOutcome.outcomes());
+            int pairedCount = com.agentlens.eval.CompareStatistics.pairedScenarios(
+                    baseOutcome.outcomes(), candOutcome.outcomes()).size();
+            System.out.printf("gate statistics: paired scenarios=%d, delta(avg pass rate)=%+.4f, "
+                            + "%d-bootstrap 95%% CI [%+.4f, %+.4f]%n",
+                    pairedCount, ci.delta(), ci.resamples(), ci.ciLow(), ci.ciHigh());
+            System.out.printf("McNemar exact (stability flips): bothPass=%d, baselineOnlyPass=%d, "
+                            + "candidateOnlyPass=%d, bothFail=%d, p=%.4f%n",
+                    mc.bothPass(), mc.baselineOnlyPass(), mc.candidateOnlyPass(), mc.bothFail(), mc.pValue());
+        }
 
         // P1-B: persist the candidate's RAW k-times outcomes so the metrics can be
         // recomputed later (pass@k / pass^k / at-least-m) without another run.
@@ -1296,6 +1334,73 @@ public final class AgentLensApp {
      * recorded in the output. Without --corpus the legacy hardcoded behavior set
      * is used (backwards compatible).
      */
+    /** S3: allowed regression for BOTH gate terms (0.0 = strict, previous default). */
+    private static double gateTolerance(Map<String, String> opts) {
+        String v = opts.get("gate-tolerance");
+        if (v == null || v.isBlank()) return 0.0;
+        try {
+            double t = Double.parseDouble(v.trim());
+            if (t < 0 || t > 1) throw new NumberFormatException("range");
+            return t;
+        } catch (NumberFormatException e) {
+            throw new ConfigException("gate-tolerance must be a number in [0,1], got: " + v);
+        }
+    }
+
+    /**
+     * S3 (credibility plan): Monte Carlo power analysis of the Level-3 gate.
+     * Simulates paired baseline/candidate experiments through the real reducers
+     * and gate, then prints false-alarm / detection-power across tolerances.
+     * Same master seed for every tolerance column so columns are paired and
+     * directly comparable.
+     */
+    private static void gatePower(Map<String, String> opts) throws Exception {
+        double p = Double.parseDouble(opts.getOrDefault("p", "0.9"));
+        int k = Integer.parseInt(opts.getOrDefault("k", "5"));
+        int scenarios = Integer.parseInt(opts.getOrDefault("scenarios", "20"));
+        double delta = Double.parseDouble(opts.getOrDefault("delta", "0.05"));
+        int trials = Integer.parseInt(opts.getOrDefault("trials", "2000"));
+        List<Double> tolerances = new ArrayList<>();
+        for (String t : opts.getOrDefault("tolerance", "0.0,0.05,0.10,0.20,0.30").split(",")) {
+            tolerances.add(Double.parseDouble(t.trim()));
+        }
+        long seed = 20260917L;
+
+        StringBuilder md = new StringBuilder();
+        md.append("# Gate power analysis (Level-3 pass^k gate, Monte Carlo)\n\n");
+        md.append(String.format("scenarios=%d, k=%d, p=%.2f, candidate delta=%.2f, trials=%d%n%n",
+                scenarios, k, p, delta, trials));
+        md.append("| metric |");
+        for (Double tol : tolerances) {
+            md.append(String.format(" tol=%.2f |", tol));
+        }
+        md.append("\n|---|");
+        md.append("---|".repeat(tolerances.size()));
+        md.append("\n");
+        md.append("| false alarm (identical quality) |");
+        for (Double tol : tolerances) {
+            md.append(String.format(" %.4f |",
+                    com.agentlens.eval.GatePower.falseAlarmRate(p, scenarios, k, tol, trials, seed)));
+        }
+        md.append("\n");
+        md.append(String.format("| detection power (candidate %.0fpp worse) |", delta * 100));
+        for (Double tol : tolerances) {
+            md.append(String.format(" %.4f |", com.agentlens.eval.GatePower.detectionPower(
+                    p, delta, scenarios, k, tol, trials, seed)));
+        }
+        md.append("\n\nTolerance guidance: size it at 2-3 SUMMARY-level sigmas, "
+                + "sqrt(q(1-q)/scenarios) with q = p^k - the pass^k term dominates the variance.\n");
+        String report = md.toString();
+        System.out.print(report);
+        Path out = Path.of(opts.getOrDefault("out", "output/gate-power.md"));
+        Path parent = out.getParent();
+        if (parent != null) {
+            java.nio.file.Files.createDirectories(parent);
+        }
+        java.nio.file.Files.writeString(out, report);
+        System.out.printf("gate-power report written: %s%n", out.toAbsolutePath());
+    }
+
     /**
      * Credibility plan S1: calibration harness for the rule-based diagnosis engine.
      * Runs the deterministic mock-behavior corpus (ground truth by construction) through

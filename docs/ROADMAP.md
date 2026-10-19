@@ -888,6 +888,34 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
 - **给使用者的直观数字**:90% 通过率的场景用 5 次重复只有 59% 概率
   (0.9^5)被判为 STABLE_PASS;"重复几次才算稳"从拍脑袋变成查表。
 
+### 7.26 S3 统计门禁:功效分析 + 置信区间 + McNemar(评测可信度工程 1A,2026-10-18)
+
+- **核心命题证实**:默认 tolerance=0 时,相同质量版本对的门禁虚警率
+  **49.9%**(p=0.9,k=5,20 场景,3000 trials 蒙特卡洛)——avgPassRate 严格比较
+  在方差下几乎永不打平,理论预测 ≈50% 命中。"门禁能不能过"在噪声面前
+  没有信息量,除非引入容忍带。
+- **`gate-power` 命令**:模拟实验穿过真实产品路径(`PassK.summarizeRaw` +
+  `RegressionGate`),虚警/检出双指标 × tolerance 网格,markdown 落盘。
+  实测网格:tol 0→0.30 时虚警 0.499→0.019;检出(5pp 退化)0.858→0.122
+  ——5pp 已低于 20 场景的噪声地板,容忍带不能盲目调大。
+- **容忍语义修正**:`RegressionGate.compare(Summary)` 的 `maxPassPowKDrop`
+  现在同时约束 pass^k 与 avgPassRate 两项(0.0 保持旧严格行为);
+  CLI `compare --gate-tolerance T` 显式透传。**容忍带定标经验**:pass^k 项
+  的 summary 级方差(σ≈√(q(1-q)/scenarios),q=p^k)比 avg 项大 3 倍,
+  容忍需按 2-3 个 summary 级 σ 定(0.9/5/20 网格点 ≈0.25-0.30)。
+- **compare 统计行**:原始逐场景结果上做 10k 重采样 bootstrap CI
+  (delta(avg pass rate) 的 95% 区间)+ 精确 McNemar(场景级稳定性翻转,
+  双侧精确二项)。冒烟实测:correct vs flaky → delta=-0.45,
+  CI [-0.56,-0.34] 不跨 0,McNemar 19 翻转 p≈0;容忍 0.5 下真实退化
+  仍被拦(pass^k 降 0.95 > 0.5),exit 100 契约不变。
+- **意外发现与修复:存储层性能悬崖**。S3 冒烟反复卡死,逐层排查
+  (jstack→worker 全部 BLOCKED 在 saveRun→micro-probe 定量)锁定:
+  SQLite 默认 journal+autocommit 下每语句 fsync,慢速盘(机械盘级 IO)
+  单次 saveRun 实测 **600ms**(空库同样慢,与 754 数据量无关)。
+  修复:WAL + synchronous=NORMAL + saveRun/saveEvaluation 显式单事务。
+  实测 **600ms → 0.3-0.7ms(稳态约 1500 倍)**,200-run compare 从
+  2 分钟+ 到 4.3 秒全程完成。证据链的崩溃安全性保持(WAL 恢复语义)。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

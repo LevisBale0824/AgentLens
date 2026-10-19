@@ -48,15 +48,15 @@ public final class GatePower {
 
     /**
      * Share of failed gates when baseline and candidate have IDENTICAL
-     * quality (the false-alarm rate). Uses per-trial reseeding from a master
-     * seed so results are deterministic for a given parameter set.
+     * quality (the false-alarm rate). One streaming Random from the master
+     * seed keeps results deterministic for a given parameter set.
      */
     public static double falseAlarmRate(double p, int scenarios, int k,
                                         double tolerance, int trials, long seed) {
-        Random master = new Random(seed);
+        Random rnd = new Random(seed);
         long fails = 0;
         for (int t = 0; t < trials; t++) {
-            if (gateFails(p, 0.0, scenarios, k, tolerance, new Random(master.nextLong()))) {
+            if (gateFails(p, 0.0, scenarios, k, tolerance, rnd)) {
                 fails++;
             }
         }
@@ -69,10 +69,10 @@ public final class GatePower {
      */
     public static double detectionPower(double p, double delta, int scenarios, int k,
                                         double tolerance, int trials, long seed) {
-        Random master = new Random(seed);
+        Random rnd = new Random(seed);
         long fails = 0;
         for (int t = 0; t < trials; t++) {
-            if (gateFails(p, delta, scenarios, k, tolerance, new Random(master.nextLong()))) {
+            if (gateFails(p, delta, scenarios, k, tolerance, rnd)) {
                 fails++;
             }
         }

@@ -67,6 +67,25 @@
   （两侧都做，声明侧负责 identifier 习惯、答案侧负责排版噪声）。
 - **证据**：commits `5c4dea9` + `7aea64c`；修复前后 pass^k 0.000 → 0.950。
 
+### A4. 存储层性能悬崖：一次冒烟卡死引出的 1500 倍修复（S3 期间发现）
+
+- **约束**：S3 统计门禁冒烟 compare 反复卡死（2 分钟+ 无输出），而同期
+  diagnose-calibrate 等命令 0.4 秒完成。
+- **定位链（每步一个事实）**：jstack → main 在 ExperimentRunner.join 等 worker，
+  全部 worker BLOCKED 在 `SqliteRunStore.saveRun` 的对象锁；持锁者 RUNNABLE 在
+  SQLite JNI `step` 且 CPU 占用极低（11 秒 109ms）→ 不是计算慢，是 IO 等待；
+  micro-probe 定量：单次 saveRun（3 事件的微型 run）**600ms**，且**空库同样慢**
+  ——排除 754 案例数据量因素，锁定每语句 fsync（默认 journal+autocommit）
+  × 慢速盘 IO。
+- **修复**：WAL + synchronous=NORMAL + saveRun/saveEvaluation 显式单事务
+  （autocommit 下每个 INSERT 独立 fsync）。
+- **验证**：micro-probe before/after：**600ms → 0.3-0.7ms（约 1500 倍）**；
+  200-run compare 全程 2 分钟+ → **4.3 秒**；质量门全绿，WAL 崩溃恢复语义
+  保持（证据链安全性不降级）。
+- **面试叙事点**：性能问题定位方法论（栈采样 → 锁竞争图 → 微基准定量 →
+  对照实验排除变量——"空库也慢"一锤定音）；"评测基础设施自身的写入吞吐
+  也是可信度的一部分"；修复不牺牲崩溃安全（WAL 恢复语义）。
+
 ---
 
 ## B. 规划中案例（验证设计已定，数字待实现时回填）
@@ -168,14 +187,20 @@
 - **面试叙事点**：标签免费（确定性生成）；"标定不是证明引擎全对，而是把盲区从
   感觉变成数字"；首跑抓到死分支证明标定有真实检出力。
 
-### C2. 回归门禁功效分析（gate power analysis）
+### C2. 回归门禁功效分析（gate power analysis）✅ 已完成（2026-10-18）
 
-- **设计**：构造已知质量差的版本对（correct vs 混入 p% 失败的候选，p ∈ {1,2,5,10,20}%），
-  每组 N 次模拟 run，测门禁**检出率曲线**；对照 p=0 相同版本对跑 200 次测**虚警率**。
-- **验证方式**：检出率对 p 单调升；p=0 虚警 ≈ 0；曲线给出"检出 5pp 退化所需最小 repeats"。
-- **待采集数字**：检出率-p 曲线各点、虚警率、最小 repeats。
-- **面试叙事点**：把门禁从"感觉能抓退化"升级为有功效曲线的统计工具——A/B 实验的
-  功效/显著性框架移植到评测门禁。
+- **设计**：`gate-power` 命令构造已知质量差的版本对（p∈{0.9}, delta=5pp, 20 场景），
+  模拟穿过**真实产品路径**（PassK.summarizeRaw + RegressionGate，非平行模型），
+  虚警率/检出率 × tolerance 网格输出。
+- **实测数字（核心命题命中）**：默认 tolerance=0 虚警率 **49.9%**——理论预测 ≈50%
+  （avgPassRate 严格比较在方差下几乎永不打平）。tol 网格 0→0.30：虚警 0.499→0.019，
+  检出 0.858→0.122（5pp 已是噪声地板）。**容忍定标经验**：pass^k 项 summary 级方差
+  σ≈√(q(1-q)/S)（q=p^k）比 avg 项大 3 倍，容忍按 2-3 个 summary 级 σ 定。
+- **配套落地**：RegressionGate 容忍语义同时约束两项（0.0 保持旧行为）、
+  `compare --gate-tolerance` flag、compare 报告加 bootstrap CI + 精确 McNemar
+  （实测 flaky 退化：delta=-0.45，CI 不跨 0，19 翻转 p≈0）。
+- **面试叙事点**："你们的门禁能过吗"→"同质量版本对有 50% 概率虚警"——
+  用蒙特卡洛穿过真实代码路径量化再修；功效/显著性框架在 CI 工程的完整移植。
 
 ### C3. FLAKY 分层的小样本误判率（给 `--repeats` 的统计指导）✅ 已完成（2026-10-18）
 

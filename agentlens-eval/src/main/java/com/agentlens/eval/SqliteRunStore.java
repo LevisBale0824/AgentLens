@@ -51,6 +51,16 @@ public final class SqliteRunStore implements AutoCloseable {
             Path parent = file.getParent();
             if (parent != null) Files.createDirectories(parent);
             conn = DriverManager.getConnection("jdbc:sqlite:" + file);
+        // Throughput pragmas (credibility plan S3 smoke finding): WAL + NORMAL
+        // fsync semantics collapse the per-statement disk sync cost - on slow
+        // (spinning-disk class) storage one saveRun otherwise costs ~600ms,
+        // making any 200-run compare take minutes. WAL keeps crash safety for
+        // the evidence chain; NORMAL fsyncs at checkpoint, losing at most the
+        // latest transaction on power loss, never corrupting the store.
+        try (Statement pragma = conn.createStatement()) {
+            pragma.execute("PRAGMA journal_mode = WAL");
+            pragma.execute("PRAGMA synchronous = NORMAL");
+        }
             try (Statement stmt = conn.createStatement()) {
                 stmt.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS runs (
@@ -140,9 +150,12 @@ public final class SqliteRunStore implements AutoCloseable {
         }
     }
 
-    /** Persists a full run with its trace events. */
+    /** Persists a full run with its trace events. Explicit single transaction. */
     public synchronized void saveRun(AgentRun run, String agentName) throws IOException {
+        boolean autoCommit = true;
         try {
+            autoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
             try (PreparedStatement runStmt = conn.prepareStatement(
                     "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?,?,?)")) {
                 runStmt.setString(1, run.runId());
@@ -177,14 +190,37 @@ public final class SqliteRunStore implements AutoCloseable {
                 }
                 evStmt.executeBatch();
             }
+            conn.commit();
         } catch (SQLException e) {
+            rollbackQuietly();
             throw new IOException("failed to save run " + run.runId(), e);
+        } finally {
+            restoreAutoCommit(autoCommit);
         }
     }
 
-    /** Persists the evaluation outcome (results + audit metadata) attached to a run. */
-    public synchronized void saveEvaluation(EvaluationRun evaluation) throws IOException {
+    private void rollbackQuietly() {
         try {
+            conn.rollback();
+        } catch (SQLException ignored) {
+            // best effort; the original failure propagates
+        }
+    }
+
+    private void restoreAutoCommit(boolean autoCommit) {
+        try {
+            conn.setAutoCommit(autoCommit);
+        } catch (SQLException ignored) {
+            // best effort on the cleanup path
+        }
+    }
+
+    /** Persists the evaluation outcome (results + audit metadata) attached to a run. Explicit transaction. */
+    public synchronized void saveEvaluation(EvaluationRun evaluation) throws IOException {
+        boolean autoCommit = true;
+        try {
+            autoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
             try (PreparedStatement stmt = conn.prepareStatement("""
                     INSERT OR REPLACE INTO evaluations
                         (run_id, task_id, agent, agent_version, started_at, results_json, metadata_json)
@@ -199,8 +235,12 @@ public final class SqliteRunStore implements AutoCloseable {
                         ? null : mapper.writeValueAsString(evaluation.metadata()));
                 stmt.executeUpdate();
             }
+            conn.commit();
         } catch (SQLException e) {
+            rollbackQuietly();
             throw new IOException("failed to save evaluation " + evaluation.id(), e);
+        } finally {
+            restoreAutoCommit(autoCommit);
         }
     }
 

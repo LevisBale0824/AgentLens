@@ -312,8 +312,12 @@ P2 LLM Judge / Web UI / 外部集成
   **S2 已完成（2026-10-18）**：PassK 三重数学验证（序性质 1000 组零违例、
   穷举双路径对拍、闭式解 4σ 收敛）+ FLAKY 误判解析↔蒙特卡洛对拍（45 组
   4σ 内、最大偏差 <0.5pp、p=0.6/k=5≈8.8% 锚点）；指导表 K=6/14/29/59
-  锚定进 usage 帮助（ROADMAP 7.25）。下一子任务：S3 统计门禁
-  （gate-power 功效分析 + compare bootstrap CI + McNemar）。
+  锚定进 usage 帮助（ROADMAP 7.25）。
+  **S3 已完成（2026-10-18）**：统计门禁——虚警命题证实（默认容忍 49.9%），
+  `gate-power` 功效网格，容忍语义双项约束 + `--gate-tolerance`，compare 加
+  bootstrap CI + 精确 McNemar；**意外修复存储性能悬崖**（saveRun 600ms→0.4ms，
+  WAL+NORMAL+显式事务，compare 2min+→4.3s，ROADMAP 7.26）。1A 剩 S10
+  成本预算评测器；下一段 1B judge 链（S4-S7）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。
