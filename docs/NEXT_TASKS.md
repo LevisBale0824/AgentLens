@@ -308,7 +308,12 @@ P2 LLM Judge / Web UI / 外部集成
   **S1 已完成（2026-10-18）**：`diagnose-calibrate` 构造即真值标定 11/11、
   0 假阳性、四层 P/R=1.000；消融精确 4 MISS；首跑抓出 give_up 孤立分支
   并接线；答案层盲区（wrong_conclusion/fabricated/partial 零诊断）被测量
-  证实（ROADMAP 7.24）。下一子任务：S2 数学验证件套（C3+C4）。
+  证实（ROADMAP 7.24）。
+  **S2 已完成（2026-10-18）**：PassK 三重数学验证（序性质 1000 组零违例、
+  穷举双路径对拍、闭式解 4σ 收敛）+ FLAKY 误判解析↔蒙特卡洛对拍（45 组
+  4σ 内、最大偏差 <0.5pp、p=0.6/k=5≈8.8% 锚点）；指导表 K=6/14/29/59
+  锚定进 usage 帮助（ROADMAP 7.25）。下一子任务：S3 统计门禁
+  （gate-power 功效分析 + compare bootstrap CI + McNemar）。
   **P1-C 语料扩充已落地（2026-10-15）**：`opsbench-import` 接入 Cloud-OpsBench
   754 个真实 K8s RCA 案例（快照重放、免活集群、ScenarioLoader 落盘即验证，
   ROADMAP 7.17）。

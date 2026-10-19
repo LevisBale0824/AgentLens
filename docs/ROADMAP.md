@@ -870,6 +870,24 @@ baseline/approved-baseline.json --by NAME` 固化为基线工件(20 案例 pass^
   allowed),"篡改语义"与"答案-证据矛盾"均无 trace 级规则——盲区清单
   成为后续规则设计的输入。
 
+### 7.25 S2 数学验证件套:PassK 性质 + FLAKY 误判解析(评测可信度工程 1A,2026-10-18)
+
+- **C4 PassK 三重数学验证**(`PassKPropertiesTest`,固定 seed 全确定性):
+  ① 序性质 `pass^k ≤ passRate ≤ pass@k` + summary 级 `pass^k ≤ avgPassRate`,
+  1000 组随机输入零违例;② 小规模穷举(k≤3 的全部 2^k 输出形态)对拍
+  `aggregate()` 与 `summarizeRaw()` 两条计算路径 + at-least-m 边界(m=k≡pass^k,
+  m=1≡pass@k);③ 恒定 p 场景的闭式解:经验 STABLE_PASS 频率收敛到 `p^k`,
+  200k 次×6 组全部落在 4σ 内。
+- **C3 FLAKY 误判解析↔蒙特卡洛对拍**(`FlakyLayeringMisclassificationTest`):
+  真实通过率 p 的场景 k 次重复被判入稳定层的概率有解析式 `p^k+(1-p)^k`;
+  蒙特卡洛 200k 次/组 × 45 组(p∈{0.1..0.9}, k∈{2,3,5,10,20})全部落在 4σ 内,
+  网格最大偏差 <0.5pp;案例库锚点 p=0.6,k=5 → **8.8%** 误判为稳定层。
+- **指导表(95% 置信获得稳定判定所需最小 repeats,写入 usage 帮助)**:
+  p=0.5 → K=6;p=0.8 → K=14;p=0.9 → K=29;p=0.95 → K=59。
+  数字由 `minRepeats(p, 0.05)` 求出并在测试中锚定——文档不可能与实现漂移。
+- **给使用者的直观数字**:90% 通过率的场景用 5 次重复只有 59% 概率
+  (0.9^5)被判为 STABLE_PASS;"重复几次才算稳"从拍脑袋变成查表。
+
 ## 8. 长期 Roadmap
 
 ### V2：实验平台化

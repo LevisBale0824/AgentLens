@@ -28,6 +28,9 @@ import java.util.Set;
 /**
  * AgentLens CLI. Usage:
  *   run [--scenarios PATH] [--repeats K] [--allowed T1,T2] [--forbidden T1,T2] [--judge]
+ *                     (--repeats guidance: 95%-confident stability layering needs
+ *                      K=6 for a p=0.5 scenario, K=29 for p=0.9, K=59 for p=0.95;
+ *                      misclassification at K=5 is ~8.8% for p=0.6 - see ROADMAP 7.25)
  *   compare --baseline BEHAVIOR --candidate BEHAVIOR [--scenarios PATH] [--repeats K]
  *           [--adapter dsh]   (both sides = real headless DSH sessions; --judge supported)
  *           [--baseline-override k=v,...] [--candidate-override k=v,...]
