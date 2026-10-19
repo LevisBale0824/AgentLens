@@ -43,16 +43,24 @@ public final class RegressionGate {
         return new GateResult(pass, basePassed, candidatePassed, reason);
     }
 
-    /** Level 3: pass^k comparison over repeated runs of the same scenario set. */
+    /**
+     * Level 3: pass^k comparison over repeated runs of the same scenario set.
+     * {@code maxPassPowKDrop} is the allowed regression applied to BOTH the
+     * pass^k summary and the avg pass rate; 0.0 keeps the previous strict
+     * behavior. The avg-rate tolerance matters for statistical honesty: with
+     * a positive per-run variance the two sides' avg rates essentially never
+     * tie, so a strict comparison false-alarms on identical quality about half
+     * the time (quantified by {@link GatePower}).
+     */
     public GateResult compare(PassK.Summary baseline, PassK.Summary candidate) {
         List<String> reasons = new ArrayList<>();
         if (candidate.passPowK() < baseline.passPowK() - maxPassPowKDrop - 1e-9) {
             reasons.add(String.format("pass^k dropped %.4f -> %.4f (allowed drop %.4f)",
                     baseline.passPowK(), candidate.passPowK(), maxPassPowKDrop));
         }
-        if (candidate.avgPassRate() < baseline.avgPassRate() - 1e-9) {
-            reasons.add(String.format("avg pass rate dropped %.4f -> %.4f",
-                    baseline.avgPassRate(), candidate.avgPassRate()));
+        if (candidate.avgPassRate() < baseline.avgPassRate() - maxPassPowKDrop - 1e-9) {
+            reasons.add(String.format("avg pass rate dropped %.4f -> %.4f (allowed drop %.4f)",
+                    baseline.avgPassRate(), candidate.avgPassRate(), maxPassPowKDrop));
         }
         boolean pass = reasons.isEmpty();
         return new GateResult(pass, -1, -1,
